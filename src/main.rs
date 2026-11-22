@@ -1,6 +1,8 @@
 mod usbguard;
 mod details;
 mod authorization;
+mod activity;
+mod security;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -13,6 +15,7 @@ use gtk::glib;
 #[derive(Clone)]
 struct View {
     parent: adw::ApplicationWindow,
+    activity: Rc<RefCell<activity::ActivityHistory>>,
     connection: gtk::Label,
     connection_icon: gtk::Image,
     total_count: gtk::Label,
@@ -50,6 +53,14 @@ fn build_window(application: &adw::Application) {
         .tooltip_text("Refresh USB devices")
         .build();
     header.pack_end(&refresh_button);
+
+    let activity_button = gtk::Button::with_label("Activity");
+    activity_button.set_tooltip_text(Some("USB changes observed during this PlugWard session"));
+    header.pack_start(&activity_button);
+    let security_button = gtk::Button::with_label("Security");
+    security_button.set_tooltip_text(Some("Read-only USBGuard enforcement and boot-status checks"));
+    header.pack_start(&security_button);
+
     layout.append(&header);
 
     let scroll = gtk::ScrolledWindow::builder()
@@ -126,7 +137,7 @@ fn build_window(application: &adw::Application) {
     page.append(&device_area);
 
     let help = gtk::Label::new(Some(
-        "Refreshes every 10 seconds. A USB name or ID is reported information, not proof of identity.",
+        "Monitors USBGuard every 3 seconds. Device descriptions are not proof of physical identity.",
     ));
     help.add_css_class("dim-label");
     help.set_wrap(true);
@@ -136,6 +147,7 @@ fn build_window(application: &adw::Application) {
     window.set_content(Some(&layout));
     let view = View {
         parent: window.clone(),
+        activity: Rc::new(RefCell::new(activity::ActivityHistory::default())),
         connection,
         connection_icon,
         total_count,
@@ -151,14 +163,173 @@ fn build_window(application: &adw::Application) {
     let button_view = view.clone();
     view.refresh_button.connect_clicked(move |_| refresh(&button_view));
 
+    let activity_view = view.clone();
+    activity_button.connect_clicked(move |_| show_activity(&activity_view.parent, &activity_view.activity));
+
+    let security_parent = window.clone();
+    security_button.connect_clicked(move |_| show_security(&security_parent));
+
     let periodic_view = view.clone();
-    glib::timeout_add_seconds_local(10, move || {
+    glib::timeout_add_seconds_local(3, move || {
         refresh(&periodic_view);
         glib::ControlFlow::Continue
     });
 
     refresh(&view);
     window.present();
+}
+
+fn clock_label() -> String {
+    glib::DateTime::now_local()
+        .ok()
+        .and_then(|date| date.format("%H:%M:%S").ok())
+        .map(|time| time.to_string())
+        .unwrap_or_else(|| "Time unavailable".to_string())
+}
+
+fn show_activity(parent: &adw::ApplicationWindow, log: &Rc<RefCell<activity::ActivityHistory>>) {
+    let window = gtk::Window::builder()
+        .title("PlugWard · Activity")
+        .default_width(570)
+        .default_height(550)
+        .transient_for(parent)
+        .build();
+
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    let clamp = adw::Clamp::new();
+    clamp.set_maximum_size(540);
+    scroll.set_child(Some(&clamp));
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    page.set_margin_start(18);
+    page.set_margin_end(18);
+    page.set_margin_top(24);
+    page.set_margin_bottom(22);
+    clamp.set_child(Some(&page));
+
+    let heading = gtk::Label::new(Some("Activity observed this session"));
+    heading.add_css_class("title-2");
+    heading.set_xalign(0.0);
+    page.append(&heading);
+
+    let note = gtk::Label::new(Some(
+        "This timeline compares sampled USBGuard listings every 3 seconds. It may miss rapid changes and contains no events before PlugWard started. It is not an audit log.",
+    ));
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    note.add_css_class("dim-label");
+    page.append(&note);
+
+    let events = log.borrow().entries();
+    let group = adw::PreferencesGroup::new();
+    group.set_title(&format!("Observed changes ({})", events.len()));
+    if events.is_empty() {
+        let empty = adw::ActionRow::new();
+        empty.set_title("No changes observed yet");
+        empty.set_subtitle("Try connecting or disconnecting a trusted, nonessential USB device.");
+        group.add(&empty);
+    }
+    for entry in events {
+        let row = adw::ActionRow::new();
+        row.set_title(&format!("{} · {}", entry.when, entry.title));
+        row.set_subtitle(&entry.description);
+        group.add(&row);
+    }
+    page.append(&group);
+    window.set_child(Some(&scroll));
+    window.present();
+}
+
+fn show_security(parent: &adw::ApplicationWindow) {
+    let window = gtk::Window::builder()
+        .title("PlugWard · Security status")
+        .default_width(580)
+        .default_height(430)
+        .transient_for(parent)
+        .build();
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    root.set_margin_start(24);
+    root.set_margin_end(24);
+    root.set_margin_top(24);
+    root.set_margin_bottom(24);
+    let title = gtk::Label::new(Some("USBGuard security status"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    root.append(&title);
+
+    let summary = gtk::Label::new(Some("Checking daemon state and effective default policy…"));
+    summary.set_xalign(0.0);
+    summary.set_wrap(true);
+    root.append(&summary);
+
+    let details = gtk::Label::new(Some(""));
+    details.set_xalign(0.0);
+    details.set_wrap(true);
+    details.set_selectable(true);
+    root.append(&details);
+
+    let note = gtk::Label::new(Some(
+        "Checks the systemd USBGuard service and daemon-reported ImplicitPolicyTarget. This does not prove that every policy rule is safe or that malicious USB hardware is impossible.",
+    ));
+    note.add_css_class("dim-label");
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    root.append(&note);
+
+    let button = gtk::Button::with_label("Recheck");
+    button.set_halign(gtk::Align::End);
+    root.append(&button);
+    let label = summary.clone();
+    let details_label = details.clone();
+    button.connect_clicked(move |button| {
+        run_security_probe(&label, &details_label, button);
+    });
+    window.set_child(Some(&root));
+    run_security_probe(&summary, &details, &button);
+    window.present();
+}
+
+fn run_security_probe(summary: &gtk::Label, details: &gtk::Label, button: &gtk::Button) {
+    if !button.is_sensitive() {
+        return;
+    }
+    button.set_sensitive(false);
+    summary.set_text("Checking USBGuard security posture…");
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(security::probe());
+    });
+    let summary = summary.clone();
+    let details = details.clone();
+    let button = button.clone();
+    glib::timeout_add_local(Duration::from_millis(150), move || {
+        match receiver.try_recv() {
+            Ok(value) => {
+                summary.set_text(value.summary());
+                details.set_text(&format!(
+                    "Daemon service: {}\nEnabled at boot: {}\nImplicit default: {}",
+                    format_check(value.daemon_active),
+                    format_check(value.boot_enabled),
+                    format_check(value.implicit_target),
+                ));
+                button.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(TryRecvError::Disconnected) => {
+                summary.set_text("Security probe unavailable");
+                button.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+        }
+    });
+}
+
+fn format_check(value: Result<String, String>) -> String {
+    match value {
+        Ok(value) => value,
+        Err(error) => format!("Unable to verify ({})", usbguard::Device::display_diagnostic(&error)),
+    }
 }
 
 fn load_styles() {
@@ -256,6 +427,7 @@ fn connection_help(error: &str) -> (&'static str, &'static str) {
 fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
     match result {
         Ok(devices) => {
+            view.activity.borrow_mut().observe(&devices, &clock_label());
             let allowed = devices.iter().filter(|d| d.target == "allow").count();
             let blocked = devices.iter().filter(|d| d.is_blocked()).count();
             view.connection.set_text("Connected");
@@ -264,7 +436,7 @@ fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
             view.allowed_count.set_text(&allowed.to_string());
             view.blocked_count.set_text(&blocked.to_string());
             view.help.set_text(
-                "Updates every 10 seconds · Names and USB IDs can be spoofed · USBGuard enforces access; PlugWard can request temporary approval with confirmation.",
+                "Updates every 3 seconds · Session activity is sampled, not a complete audit · Names and USB IDs are spoofable.",
             );
 
             if view.last_devices.borrow().as_ref() != Some(&devices) {
@@ -274,6 +446,7 @@ fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
             }
         }
         Err(error) => {
+            view.activity.borrow_mut().reset_observation();
             view.connection.set_text("Connection unavailable");
             view.connection_icon.set_icon_name(Some("dialog-warning-symbolic"));
             view.total_count.set_text("—");
