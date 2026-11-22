@@ -1,0 +1,49 @@
+/* PlugWard v0.2 — follows GNOME's light/dark libadwaita color tokens. */
+/* State is conveyed through text as well as color for accessibility. */
+
+.pw-status-card {
+  border-radius: 16px;
+  padding: 18px;
+  background-color: alpha(@accent_bg_color, 0.09);
+  border: 1px solid alpha(@accent_color, 0.25);
+}
+
+.pw-readonly-pill {
+  border-radius: 999px;
+  padding: 6px 11px;
+  background-color: alpha(@accent_bg_color, 0.16);
+  color: @accent_color;
+  font-weight: 700;
+  font-size: 0.78em;
+}
+
+.pw-metric {
+  border-radius: 16px;
+  padding: 16px;
+  background-color: @card_bg_color;
+  border: 1px solid alpha(@borders, 0.6);
+}
+
+.pw-device-icon {
+  opacity: 0.82;
+}
+
+.pw-pill {
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-weight: 700;
+  font-size: 0.82em;
+}
+
+.pw-allowed {
+  color: @success_color;
+  background-color: alpha(@success_color, 0.10);
+}
+.pw-blocked {
+  color: @error_color;
+  background-color: alpha(@error_color, 0.10);
+}
+.pw-unknown {
+  color: @warning_color;
+  background-color: alpha(@warning_color, 0.10);
+}
