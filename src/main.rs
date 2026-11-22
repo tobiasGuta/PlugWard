@@ -150,6 +150,32 @@ fn refresh(view: &View) {
     });
 }
 
+/// Turn common D-Bus failures into actionable, least-privilege guidance.
+fn connection_help(error: &str) -> (&'static str, &'static str) {
+    if error.contains("NameHasNoOwner")
+        || error.contains("ServiceUnknown")
+        || error.contains("unknown unit")
+    {
+        (
+            "USBGuard D-Bus bridge unavailable",
+            "On Fedora: sudo dnf install usbguard-dbus; then sudo systemctl enable --now usbguard-dbus.service. This does not change USBGuard's security policy.",
+        )
+    } else if error.contains("AccessDenied")
+        || error.contains("NotAuthorized")
+        || error.contains("Authentication")
+    {
+        (
+            "Permission to list devices denied",
+            "Check D-Bus and Polkit permissions for USBGuard device listing. Do not grant broad passwordless USBGuard management access.",
+        )
+    } else {
+        (
+            "Unable to read USBGuard",
+            "Check that usbguard-dbus.service is running and that D-Bus/Polkit permits device listing. Do not weaken the USBGuard policy to fix PlugWard.",
+        )
+    }
+}
+
 fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
     while let Some(child) = view.device_area.first_child() {
         view.device_area.remove(&child);
@@ -206,16 +232,36 @@ fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
         Err(error) => {
             view.connection.set_text("Not available");
             view.summary.set_text("No device data");
-            view.help.set_text(
-                "Check whether the Fedora usbguard-dbus package is installed and whether D-Bus/Polkit allows device listing. Do not weaken the USBGuard policy to fix the GUI.",
-            );
+            let (title, guidance) = connection_help(&error);
+            view.help.set_text(guidance);
             let group = adw::PreferencesGroup::new();
             group.set_title("Connection error");
             let row = adw::ActionRow::new();
-            row.set_title("Unable to read USBGuard");
+            row.set_title(title);
             row.set_subtitle(&error);
             group.add(&row);
             view.device_area.append(&group);
         }
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::connection_help;
+
+    #[test]
+    fn missing_bridge_explains_fedora_setup() {
+        let (title, help) = connection_help(
+            "GDBus.Error:org.freedesktop.DBus.Error.NameHasNoOwner: activation request failed: unknown unit",
+        );
+        assert!(title.contains("bridge unavailable"));
+        assert!(help.contains("dnf install usbguard-dbus"));
+    }
+
+    #[test]
+    fn denied_access_does_not_recommend_weakening_policy() {
+        let (title, help) = connection_help("org.freedesktop.DBus.Error.AccessDenied");
+        assert!(title.contains("denied"));
+        assert!(help.contains("Do not grant broad"));
     }
 }
