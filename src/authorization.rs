@@ -95,7 +95,7 @@ pub fn allow_once(selected: &Device) -> Result<AllowResult, String> {
             Some(&(selected.number, TARGET_ALLOW, false).to_variant()),
             None,
             gio::DBusCallFlags::NONE,
-            30_000,
+            120_000,
             None::<&gio::Cancellable>,
         )
         .map_err(|error| format!(
