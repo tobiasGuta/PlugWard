@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn postwrite_check_needs_expected_allowed_target_and_same_metadata() {
         let selected = sample();
-        assert!(!verify_allowed(&selected, &[selected.clone()]));
+        assert!(!verify_allowed(&selected, std::slice::from_ref(&selected)));
         let mut allowed = selected.clone();
         allowed.target = "allow".to_string();
         assert!(verify_allowed(&selected, &[allowed.clone()]));
