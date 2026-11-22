@@ -17,6 +17,8 @@ pub struct Device {
     pub usb_id: String,
     pub name: String,
     pub port: String,
+    pub connection_type: String,
+    pub interfaces: Vec<String>,
 }
 
 impl Device {
@@ -29,6 +31,65 @@ impl Device {
         }
     }
 
+    pub fn is_blocked(&self) -> bool {
+        matches!(self.target.as_str(), "block" | "reject")
+    }
+
+
+    /// A presentation hint based on reported USB descriptors, not a trust check.
+    pub fn kind(&self) -> DeviceKind {
+        if matches!(self.usb_id.as_str(), "1d6b:0002" | "1d6b:0003") {
+            DeviceKind::Controller
+        } else if self.usb_id == "8087:0026"
+            || self.interfaces.iter().any(|code| code == "e0:01:01") {
+            DeviceKind::Bluetooth
+        } else if self.interfaces.iter().any(|code| code.starts_with("0e:")) {
+            DeviceKind::Camera
+        } else if self.interfaces.iter().any(|code| code.starts_with("03:")) {
+            DeviceKind::Input
+        } else if self.interfaces.iter().any(|code| code.starts_with("08:")) {
+            DeviceKind::Storage
+        } else if self.interfaces.iter().any(|code| code.starts_with("02:") || code.starts_with("0a:")) {
+            DeviceKind::Network
+        } else {
+            DeviceKind::Other
+        }
+    }
+
+    pub fn icon_name(&self) -> &'static str {
+        match self.kind() {
+            DeviceKind::Controller => "computer-symbolic",
+            DeviceKind::Bluetooth => "bluetooth-symbolic",
+            DeviceKind::Camera => "camera-web-symbolic",
+            DeviceKind::Input => "input-mouse-symbolic",
+            DeviceKind::Storage => "drive-removable-media-symbolic",
+            DeviceKind::Network => "network-wired-symbolic",
+            DeviceKind::Other => "drive-removable-media-symbolic",
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        if self.name.is_empty() || self.name == "Unnamed USB device" {
+            return match self.kind() {
+                DeviceKind::Bluetooth => "Bluetooth adapter (reported)".to_string(),
+                DeviceKind::Camera => "USB camera (reported)".to_string(),
+                _ => "Unnamed USB device".to_string(),
+            };
+        }
+        let cleaned: String = self.name.chars()
+            .filter(|c| !c.is_control() && !is_bidi_control(*c))
+            .take(80).collect();
+        if cleaned.trim().is_empty() { "Unnamed USB device".to_string() } else { cleaned }
+    }
+
+    pub fn connection_label(&self) -> &'static str {
+        match self.connection_type.as_str() {
+            "hardwired" => "Internal (reported)",
+            "hotplug" => "Hotplug",
+            _ => "Connection unknown",
+        }
+    }
+
     pub fn priority(&self) -> u8 {
         match self.target.as_str() {
             "block" | "reject" => 0,
@@ -36,6 +97,29 @@ impl Device {
             _ => 2,
         }
     }
+}
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceKind { Controller, Camera, Bluetooth, Input, Storage, Network, Other }
+
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+// Only parse class codes in the with-interface attribute, not in the USB name.
+fn interface_codes(tokens: &[String]) -> Vec<String> {
+    let Some(index) = tokens.iter().position(|part| part == "with-interface") else { return Vec::new(); };
+    let rest = &tokens[index + 1..];
+    let Some(first) = rest.first() else { return Vec::new(); };
+    let candidates: Vec<&str> = if first == "{" {
+        rest.iter().skip(1).take_while(|part| part.as_str() != "}")
+            .map(String::as_str).collect()
+    } else { vec![first.as_str()] };
+    candidates.into_iter().filter(|code| {
+        let chunks: Vec<&str> = code.split(':').collect();
+        chunks.len() == 3 && chunks.iter().all(|part| part.len() == 2 && part.chars().all(|c| c.is_ascii_hexdigit()))
+    }).map(str::to_ascii_lowercase).collect()
 }
 
 /// Connects to the *system* bus and asks USBGuard to list devices.
@@ -75,7 +159,7 @@ pub fn list_devices() -> Result<Vec<Device>, String> {
     devices.sort_by(|a, b| {
         a.priority()
             .cmp(&b.priority())
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.display_name().to_lowercase().cmp(&b.display_name().to_lowercase()))
             .then_with(|| a.number.cmp(&b.number))
     });
     Ok(devices)
@@ -101,6 +185,8 @@ pub fn parse_device_rule(number: u32, rule: &str) -> Device {
             .unwrap_or("Unnamed USB device")
             .to_string(),
         port: value("via-port").unwrap_or("Not reported").to_string(),
+        connection_type: value("with-connect-type").unwrap_or("").to_string(),
+        interfaces: interface_codes(&tokens),
     }
 }
 
@@ -196,4 +282,35 @@ mod tests {
         let device = parse_device_rule(20, r#"allow id 1234:5678 serial "" name "Test Device""#);
         assert_eq!(device.name, "Test Device");
     }
+    #[test]
+    fn categorizes_reported_devices_and_groups_root_hubs() {
+        let hub = parse_device_rule(8, r#"allow id 1d6b:0002 name "xHCI Host Controller""#);
+        assert_eq!(hub.kind(), DeviceKind::Controller);
+        let bt = parse_device_rule(14, r#"allow id 8087:0026 name "" with-interface { e0:01:01 e0:01:01 } with-connect-type "hardwired""#);
+        assert_eq!(bt.kind(), DeviceKind::Bluetooth);
+        assert_eq!(bt.display_name(), "Bluetooth adapter (reported)");
+        assert_eq!(bt.connection_label(), "Internal (reported)");
+        let camera = parse_device_rule(13, r#"allow id 04f2:b76f name "ACER HD User Facing" with-interface { 0e:01:00 0e:02:00 fe:01:01 }"#);
+        assert_eq!(camera.kind(), DeviceKind::Camera);
+        assert_eq!(camera.interfaces.len(), 3);
+    }
+
+    #[test]
+    fn fake_interface_in_name_does_not_affect_category() {
+        let fake = parse_device_rule(99, r#"block id 1234:5678 name "e0:01:01""#);
+        assert_eq!(fake.kind(), DeviceKind::Other);
+    }
+
+    #[test]
+    fn removes_bidi_controls_from_untrusted_names() {
+        let fake = parse_device_rule(99, "block id 1234:5678 name \"Bad\u{202e}USB\"");
+        assert_eq!(fake.display_name(), "BadUSB");
+    }
+
+    #[test]
+    fn keeps_untrusted_markup_as_plain_text() {
+        let fake = parse_device_rule(99, r#"block id 1234:5678 name "<script> USB""#);
+        assert_eq!(fake.display_name(), "<script> USB");
+    }
+
 }
