@@ -1,0 +1,5 @@
+/target
+*.rpm
+*.deb
+*.swp
+.DS_Store

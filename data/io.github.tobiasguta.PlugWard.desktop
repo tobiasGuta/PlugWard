@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PlugWard
+Comment=Read-only USBGuard device dashboard
+Exec=plugward
+Icon=drive-removable-media
+Terminal=false
+Categories=System;Security;GTK;
+StartupNotify=true
