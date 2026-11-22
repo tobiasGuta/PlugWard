@@ -35,7 +35,19 @@ PlugWard includes its own USB-and-shield SVG icon, stored at \`data/icons/hicolo
 bash scripts/install-user.sh
 \`\`\`
 
-This compiles the release binary and installs it to \`~/.local/bin\`, plus a \`~/.local/share/applications\` launcher and \`~/.local/share/icons\` icon. It **does not** change USBGuard policies, services, Polkit, or system packages. Depending on your GNOME session you may need to log out and back in to see the launcher.
+This compiles the release binary and installs it to `~/.local/bin`, plus a per-user GNOME launcher and app icon. It **does not** change USBGuard policies, services, Polkit, or system packages.
+
+The installer now copies the scalable SVG and, when `rsvg-convert` or Inkscape is available, also renders a 256px PNG. The user-local `.desktop` file uses an **absolute icon path** (PNG preferred) instead of relying on icon-theme lookup. The executable path is also absolute.
+
+### Fix a generic / missing GNOME launcher icon
+
+After updating the repository, rerun `bash scripts/install-user.sh` **without sudo**. Inspect the launcher:
+
+```bash
+grep -E '^(Icon|Exec)=' "${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.tobiasguta.PlugWard.desktop"
+```
+
+The `Icon=` path should reference an existing file; verify it with `ls -l` on that exact path. If GNOME continues to show the old placeholder, **sign out and back in** to reload the launcher (do not try to restart GNOME Shell in-place on Wayland).
 
 ## v0.3 alpha 2: guarded Allow Once (stage 2 preview)
 
