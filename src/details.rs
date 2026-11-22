@@ -1,7 +1,7 @@
-//! GNOME read-only device inspector.
+//! GNOME device inspector with strict, explicit authorization controls.
 //!
-//! Deliberately provides no authorization/write operations. Recheck only
-//! compares against a new, privileged-service-supplied device list.
+//! Overview is concise; Advanced contains detailed reported USB metadata.
+//! All write actions require independent confirmation and fresh USBGuard checks.
 
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
@@ -47,12 +47,37 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
     page.append(&title);
 
     let note = gtk::Label::new(Some(
-        "Read-only snapshot from USBGuard. Device names and IDs can be spoofed; this view does not prove hardware identity.",
+        "Device details are reported by USBGuard, not proof of authentic hardware. Any access change requires separate confirmation.",
     ));
     note.add_css_class("dim-label");
     note.set_xalign(0.0);
     note.set_wrap(true);
     page.append(&note);
+
+    let overview = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    let advanced = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let stack = gtk::Stack::new();
+    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+    stack.add_titled(&overview, Some("overview"), "Overview");
+    stack.add_titled(&advanced, Some("advanced"), "Advanced");
+    let switcher = gtk::StackSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_halign(gtk::Align::Center);
+    page.append(&switcher);
+    page.append(&stack);
+
+    let essentials = adw::PreferencesGroup::new();
+    essentials.set_title("Device overview");
+    let essentials_row = adw::ActionRow::new();
+    essentials_row.set_title(&device.display_name());
+    essentials_row.set_subtitle(&format!(
+        "USB ID {} · Port {} · {}",
+        Device::display_attribute(&device.usb_id),
+        Device::display_attribute(&device.port),
+        device.connection_label(),
+    ));
+    essentials.add(&essentials_row);
+    overview.append(&essentials);
 
     let group = adw::PreferencesGroup::new();
     group.set_title("Current authorization (at opening)");
@@ -64,7 +89,7 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
     number.set_title("Runtime device number");
     number.set_subtitle(&device.number.to_string());
     group.add(&number);
-    page.append(&group);
+    overview.append(&group);
 
     if device.target == "block" {
         let approval = adw::PreferencesGroup::new();
@@ -89,7 +114,7 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
         }
         action.add_suffix(&button);
         approval.add(&action);
-        page.append(&approval);
+        overview.append(&approval);
     }
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -97,6 +122,13 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
     heading.add_css_class("heading");
     heading.set_xalign(0.0);
     details.append(&heading);
+    let technical_note = gtk::Label::new(Some(
+        "Advanced details are reported by USBGuard. Serial numbers, hashes, interface classes, and USB identifiers can be spoofed.",
+    ));
+    technical_note.add_css_class("dim-label");
+    technical_note.set_wrap(true);
+    technical_note.set_xalign(0.0);
+    advanced.append(&technical_note);
     add_field(&details, "USB vendor:product ID", &device.usb_id);
     add_field(&details, "USB-reported name", &device.name);
     add_field(&details, "USB port", &device.port);
@@ -109,14 +141,14 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
         "USB interface codes",
         &device.interfaces.join(", "),
     );
-    page.append(&details);
+    advanced.append(&details);
 
     let verify_group = adw::PreferencesGroup::new();
     verify_group.set_title("Freshness check");
     verify_group.set_description(Some(
         "Recheck compares this snapshot with the latest USBGuard listing. A match is not proof of identity or continuous presence.",
     ));
-    page.append(&verify_group);
+    overview.append(&verify_group);
 
     let verify_row = adw::ActionRow::new();
     verify_row.set_title("Compare with current listing");
@@ -129,7 +161,7 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
     result.set_wrap(true);
     result.set_xalign(0.0);
     result.add_css_class("dim-label");
-    page.append(&result);
+    overview.append(&result);
 
     let snapshot = device.clone();
     verify_button.connect_clicked(move |button| {
