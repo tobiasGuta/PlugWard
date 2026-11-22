@@ -316,7 +316,7 @@ fn run_allow_once(parent: &gtk::Window, snapshot: Device) {
             }
             Ok(Err(error)) => {
                 heading.set_text("Authorization not confirmed");
-                description.set_text(&Device::display_attribute(&error));
+                description.set_text(&Device::display_diagnostic(&error));
                 close.set_sensitive(true);
                 glib::ControlFlow::Break
             }

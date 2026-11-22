@@ -84,6 +84,32 @@ systemctl status usbguard-dbus.service --no-pager
 
 Then install and start the bridge as shown above. If the bridge is active but PlugWard reports an access-denied error, check D-Bus and Polkit authorization. **Do not add blanket allow or passwordless management rules** simply to make the GUI work.
 
+### Troubleshooting: “Not authorized” on Allow once
+
+PlugWard's first write-enabled alpha omitted the GIO **interactive authorization**
+flag on its USBGuard D-Bus write request. This could prevent Fedora's Polkit
+authentication prompt. A confirmed **Allow once** request now explicitly sets
+`Gio.DBusCallFlags.ALLOW_INTERACTIVE_AUTHORIZATION`; read-only listing does
+not request authentication.
+
+If a new attempt is still denied, **do not** add passwordless Polkit rules or
+weaken your USBGuard IPC access control. Inspect the installed action and
+existing authorization logs (these commands do not authorize a USB device):
+
+```bash
+pkaction --action-id org.usbguard.Devices1.applyDevicePolicy --verbose
+systemctl is-active polkit.service usbguard-dbus.service usbguard.service
+sudo journalctl -b -u usbguard-dbus.service -n 40 --no-pager
+sudo journalctl -b -u polkit.service -n 40 --no-pager
+sudo usbguard list-devices --blocked
+```
+
+The denial may come from the system D-Bus bus policy, Polkit, or USBGuard's
+own IPC privileges. The GUI cannot safely assume which one rejected a request
+based solely on an AccessDenied string. If there was no password dialog,
+check your GNOME authentication agent and the installed system policy
+before adjusting any authorization configuration.
+
 ## Development
 
 ```bash

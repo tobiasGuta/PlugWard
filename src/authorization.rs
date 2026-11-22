@@ -15,6 +15,12 @@ const PATH: &str = "/org/usbguard1/Devices";
 const INTERFACE: &str = "org.usbguard.Devices1";
 const TARGET_ALLOW: u32 = 0;
 
+// Allow a Polkit password prompt only for an explicitly user-confirmed
+// write request. Read-only D-Bus calls retain DBusCallFlags::NONE.
+fn confirmed_write_flags() -> gio::DBusCallFlags {
+    gio::DBusCallFlags::ALLOW_INTERACTIVE_AUTHORIZATION
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum AllowResult {
     /// Post-write USBGuard listing confirmed the same reported device is allowed.
@@ -94,14 +100,29 @@ pub fn allow_once(selected: &Device) -> Result<AllowResult, String> {
             "applyDevicePolicy",
             Some(&(selected.number, TARGET_ALLOW, false).to_variant()),
             None,
-            gio::DBusCallFlags::NONE,
+            confirmed_write_flags(),
             120_000,
             None::<&gio::Cancellable>,
         )
-        .map_err(|error| format!(
-            "USBGuard did not confirm temporary authorization: {error}. \
-             No permission overrides were applied; check the current device state before retrying."
-        ))?;
+        .map_err(|error| {
+            let message = error.to_string();
+            if message.contains("AccessDenied")
+                || message.contains("Not authorized")
+                || message.contains("NotAuthorized")
+            {
+                format!(
+                    "Authorization was denied by the system: {message}. \
+                     PlugWard requested interactive authentication, but it was not granted. \
+                     Review D-Bus and Polkit logs; do not install passwordless grants \
+                     or weaken USBGuard permissions."
+                )
+            } else {
+                format!(
+                    "USBGuard did not confirm temporary authorization: {message}. \
+                     No permission overrides were applied. Check the current device state before retrying."
+                )
+            }
+        })?;
 
     let _: (u32,) = reply.get().ok_or_else(|| {
         "The authorization response was unexpected; recheck the USBGuard state before attempting another action.".to_string()
@@ -207,4 +228,14 @@ mod tests {
         assert!(validate_current(&first, &[indistinguishable_spoof]).is_ok());
         // Documented inherent limitation of client-side matching.
     }
+    #[test]
+    fn user_confirmed_write_requests_interactive_authentication() {
+        assert!(confirmed_write_flags().contains(
+            gio::DBusCallFlags::ALLOW_INTERACTIVE_AUTHORIZATION
+        ));
+        assert!(!gio::DBusCallFlags::NONE.contains(
+            gio::DBusCallFlags::ALLOW_INTERACTIVE_AUTHORIZATION
+        ));
+    }
+
 }
