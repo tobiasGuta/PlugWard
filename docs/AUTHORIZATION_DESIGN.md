@@ -1,6 +1,12 @@
-# PlugWard authorization design — Stage 2 (not implemented)
+# PlugWard authorization design — Stage 2 (partial implementation)
 
-The v0.3 alpha app is read-only. This document outlines the **minimum security gates** to implement before a separate PR exposes write actions.
+**Implemented in v0.3.0-alpha.2:** A guarded Allow Once request through the existing system D-Bus bridge using `applyDevicePolicy(id, 0, false)`, confirmation, fresh device-list consistency checks, disallowing critical/internal/HID/network/Bluetooth devices, and post-write verification. It requires the system's existing authorization and does not change Polkit or USBGuard IPC rules.
+
+**Not implemented:** Permanent trust, Block, Reject, automated device approval, and guarantees against TOCTOU or forged USB descriptors. Mock D-Bus authorization tests and independent security review remain goals before broadening supported device types. Do not describe this early preview as fully security-audited.
+
+
+
+This document describes the remaining security gates and the first explicitly confirmed temporary-approval implementation.
 
 ## API and privilege boundary
 
@@ -39,4 +45,4 @@ Display a confirmation showing both the device's **reported descriptors** and th
 - Require deliberate human confirmation for every authorization change and clear feedback from USBGuard.
 - Security review of Polkit policy and each installed package's effective D-Bus/IPC privileges, not just the GUI's code.
 
-**Stage 1 (this branch) intentionally does not call any write API or include nonfunctional Allow/Block buttons.**
+**Stage 2 preview** includes only a temporary Allow Once action. The broader actions above remain unimplemented.

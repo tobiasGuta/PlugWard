@@ -4,7 +4,27 @@
 
 PlugWard is an experimental, native GNOME desktop dashboard for [USBGuard](https://usbguard.github.io/). It is written in Rust using GTK4 and libadwaita.
 
-> **Development status:** v0.3 alpha, still read-only. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+> **Development status:** v0.3 alpha 2, with limited confirmed temporary authorization. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+
+## v0.3 alpha 2: guarded Allow Once (stage 2 preview)
+
+**New:** Open **Details** on a blocked, personally trusted USB peripheral and choose **Allow once…**. PlugWard requires a separate confirmation that identifies the reported device and port; it re-fetches USBGuard's current device list and aborts if its number, reported attributes, port, hash, interfaces, or authorization changed. It then requests `applyDevicePolicy(device_number, 0, false)` through USBGuard's system D-Bus bridge and checks the new state. It never saves a permanent allow rule.
+
+**Deliberate restrictions:** In this preview, only currently `block`-targeted, external `hotplug` devices with nonempty hashes and known port/USB ID can be approved. Root USB controllers, internal/hardwired devices, input/HID, network, and Bluetooth classes are excluded. The device's class is *reported* and can be spoofed. Do not plug in untrusted or found devices to test it.
+
+A matching device snapshot is **not proof of physical identity**, and a reconnect can occur between a fresh check and the separate D-Bus write. If permissions are denied, PlugWard reports the error. Never install broad passwordless Polkit or USBGuard IPC rules to make this feature work. The system may request administrator authentication, depending on existing policy.
+
+### Fedora test procedure (trusted nonessential spare USB storage)
+
+1. Save your work and keep your built-in keyboard/touchpad available.
+2. Back up your current verified USBGuard rules before testing: `sudo cp -a /etc/usbguard/rules.conf /etc/usbguard/rules.conf.before-plugward-test`.
+3. Launch PlugWard as your normal user using `cargo run`; do not use `sudo`.
+4. Plug in a **personally owned, known-safe, nonessential** USB storage device that is not on your allowlist. USBGuard should show it as blocked.
+5. Open Details, inspect its reported fields, then click **Allow once…** and read the confirmation. Confirm only if you trust it. If the system asks for authorization, follow your normal Polkit prompt.
+6. Use Refresh and `sudo usbguard list-devices` to verify current state. Unplug the device; on reconnection it should be evaluated against your original policy again.
+7. Verify no permanent rule was added with `sudo usbguard list-rules`.
+
+**No permanent trust, Block, or Reject UI exists in this version.** Stop testing if authorization is denied or the device listing unexpectedly changes; don't weaken your system policy. See [authorization design](docs/AUTHORIZATION_DESIGN.md).
 
 ## v0.3 alpha: device inspection (stage 1)
 
@@ -30,7 +50,7 @@ This is **stage 1** of v0.3. See [authorization design](docs/AUTHORIZATION_DESIG
 
 **Important:** USB names, IDs, and class descriptors can be spoofed. These categories are **display hints**, not proof of device identity. A working dashboard connection does **not** independently verify that USBGuard is configured with a default-deny policy.
 
-PlugWard **never** authorizes devices, changes rules, starts/stops USBGuard, or elevates its own privileges.
+PlugWard supports **explicit temporary approval** of eligible blocked devices; it never adds permanent rules, starts/stops USBGuard, or elevates its own process privileges.
 
 ## Fedora setup
 

@@ -9,6 +9,7 @@ use std::time::Duration;
 use adw::prelude::*;
 use gtk::glib;
 
+use crate::authorization::{self, AllowResult};
 use crate::usbguard::{self, Device};
 
 pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
@@ -64,6 +65,32 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
     number.set_subtitle(&device.number.to_string());
     group.add(&number);
     page.append(&group);
+
+    if device.target == "block" {
+        let approval = adw::PreferencesGroup::new();
+        approval.set_title("Temporary authorization");
+        approval.set_description(Some(
+            "Allows this connection only, without adding a persistent rule. Use only with a USB device you independently trust.",
+        ));
+        let action = adw::ActionRow::new();
+        action.set_title("Allow this connection once");
+        let button = gtk::Button::with_label("Allow once…");
+        button.add_css_class("suggested-action");
+        match authorization::eligibility(device) {
+            Ok(()) => {
+                let current = device.clone();
+                let parent = window.clone();
+                button.connect_clicked(move |_| confirm_allow_once(&parent, current.clone()));
+            }
+            Err(reason) => {
+                button.set_sensitive(false);
+                action.set_subtitle(reason);
+            }
+        }
+        action.add_suffix(&button);
+        approval.add(&action);
+        page.append(&approval);
+    }
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 10);
     let heading = gtk::Label::new(Some("Reported device attributes"));
@@ -171,4 +198,137 @@ fn add_field(container: &gtk::Box, name: &str, value: &str) {
     text.set_wrap_mode(gtk::pango::WrapMode::Char);
     field.append(&text);
     container.append(&field);
+}
+
+
+fn confirm_allow_once(parent: &gtk::Window, snapshot: Device) {
+    let dialog = gtk::Window::builder()
+        .title("Confirm temporary USB access")
+        .default_width(450)
+        .modal(true)
+        .transient_for(parent)
+        .build();
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+    content.set_margin_top(22);
+    content.set_margin_bottom(22);
+
+    let heading = gtk::Label::new(Some("Allow this USB device once?"));
+    heading.add_css_class("title-2");
+    heading.set_xalign(0.0);
+    heading.set_wrap(true);
+    content.append(&heading);
+
+    let info = gtk::Label::new(Some(&format!(
+        "Reported device: {}\nUSB ID: {}\nPort: {}\nCurrent state: {}\n\nThis permits the current USB connection only. It does not add a permanent allow rule.\n\nDevice descriptions and hashes can be spoofed. Only proceed if you independently trust the physical device.",
+        snapshot.display_name(),
+        Device::display_attribute(&snapshot.usb_id),
+        Device::display_attribute(&snapshot.port),
+        snapshot.status()
+    )));
+    info.set_xalign(0.0);
+    info.set_wrap(true);
+    info.set_selectable(true);
+    content.append(&info);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    let approve = gtk::Button::with_label("Allow once");
+    approve.add_css_class("suggested-action");
+    actions.append(&cancel);
+    actions.append(&approve);
+    content.append(&actions);
+
+    let cancel_window = dialog.clone();
+    cancel.connect_clicked(move |_| cancel_window.close());
+
+    let confirm_window = dialog.clone();
+    let details_window = parent.clone();
+    approve.connect_clicked(move |_| {
+        // Only this explicit confirmation event can trigger the D-Bus write.
+        confirm_window.close();
+        run_allow_once(&details_window, snapshot.clone());
+    });
+
+    dialog.set_child(Some(&content));
+    dialog.present();
+}
+
+fn run_allow_once(parent: &gtk::Window, snapshot: Device) {
+    let window = gtk::Window::builder()
+        .title("USB authorization result")
+        .default_width(450)
+        .modal(true)
+        .transient_for(parent)
+        .build();
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+    content.set_margin_top(22);
+    content.set_margin_bottom(22);
+
+    let heading = gtk::Label::new(Some("Checking device and requesting access…"));
+    heading.set_wrap(true);
+    heading.set_xalign(0.0);
+    heading.add_css_class("heading");
+    content.append(&heading);
+
+    let description = gtk::Label::new(Some(
+        "PlugWard is rechecking the selected device before asking USBGuard to authorize its current connection. The system may request administrator authentication.",
+    ));
+    description.set_wrap(true);
+    description.set_xalign(0.0);
+    content.append(&description);
+
+    let close = gtk::Button::with_label("Close");
+    close.set_halign(gtk::Align::End);
+    close.set_sensitive(false);
+    let dialog = window.clone();
+    close.connect_clicked(move |_| dialog.close());
+    content.append(&close);
+    window.set_child(Some(&content));
+    window.present();
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(authorization::allow_once(&snapshot));
+    });
+
+    glib::timeout_add_local(Duration::from_millis(150), move || {
+        match receiver.try_recv() {
+            Ok(Ok(AllowResult::Confirmed)) => {
+                heading.set_text("Temporary authorization confirmed");
+                description.set_text(
+                    "USBGuard's latest listing shows this connection as allowed. No permanent rule was requested. Refresh the main dashboard to see the new status.",
+                );
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Ok(AllowResult::Unverified(message))) => {
+                heading.set_text("Authorization state not verified");
+                description.set_text(&message);
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Err(error)) => {
+                heading.set_text("Authorization not confirmed");
+                description.set_text(&Device::display_attribute(&error));
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Disconnected) => {
+                heading.set_text("Authorization worker unavailable");
+                description.set_text(
+                    "Unable to determine the result. Inspect USBGuard's current device list before another attempt.",
+                );
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+        }
+    });
 }
