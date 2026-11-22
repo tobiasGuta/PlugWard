@@ -4,8 +4,6 @@
 
 use gtk::gio;
 use gtk::gio::prelude::*;
-use gtk::glib;
-use gtk::glib::prelude::*;
 use gtk::glib::variant::ToVariant;
 
 const SERVICE: &str = "org.usbguard1";
