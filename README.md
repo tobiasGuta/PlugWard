@@ -21,6 +21,8 @@ Keep your existing working USBGuard daemon and policy unchanged. To install the 
 
 ```bash
 sudo dnf install usbguard-dbus gtk4 libadwaita
+sudo systemctl enable --now usbguard-dbus.service
+systemctl is-active usbguard-dbus.service
 ```
 
 For a development build on Fedora:
@@ -32,7 +34,18 @@ cd PlugWard
 cargo run
 ```
 
-Run PlugWard **as your normal desktop user**, not with `sudo`. If the bridge refuses access, PlugWard reports the error rather than modifying your USBGuard configuration. Installing `usbguard-dbus` does not replace the existing daemon, but its service may be D-Bus-activated when queried.
+Run PlugWard **as your normal desktop user**, not with `sudo`. If the bridge refuses access, PlugWard reports the error rather than modifying your USBGuard configuration. Installing `usbguard-dbus` does not replace or reconfigure the existing USBGuard daemon. PlugWard depends on the separate `usbguard-dbus.service` to expose the `org.usbguard1` D-Bus name.
+
+### Troubleshooting
+
+If PlugWard reports `NameHasNoOwner`, `unknown unit`, or says that the USBGuard D-Bus bridge is unavailable, first check:
+
+```bash
+rpm -q usbguard-dbus
+systemctl status usbguard-dbus.service --no-pager
+```
+
+Then install and start the bridge as shown above. If the bridge is active but PlugWard reports an access-denied error, check D-Bus and Polkit authorization. **Do not add blanket allow or passwordless management rules** simply to make the GUI work.
 
 ## Development
 
