@@ -47,3 +47,11 @@
   color: @warning_color;
   background-color: alpha(@warning_color, 0.10);
 }
+
+/* Read-only device inspector */
+.pw-detail-field {
+  border-radius: 10px;
+  padding: 10px 14px;
+  background-color: @card_bg_color;
+  border: 1px solid alpha(@borders, 0.5);
+}
