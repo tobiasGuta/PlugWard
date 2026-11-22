@@ -3,7 +3,6 @@
 //! Intentionally does not expose authorization or policy-editing methods.
 
 use gtk::gio;
-use gtk::gio::prelude::*;
 use gtk::glib::variant::ToVariant;
 
 const SERVICE: &str = "org.usbguard1";
@@ -50,7 +49,7 @@ pub fn list_devices() -> Result<Vec<Device>, String> {
         .call_sync(
             Some(SERVICE),
             PATH,
-            Some(INTERFACE),
+            INTERFACE,
             "listDevices",
             Some(&("match",).to_variant()),
             None,
