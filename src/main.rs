@@ -1,5 +1,7 @@
 mod usbguard;
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
@@ -9,10 +11,15 @@ use gtk::glib;
 #[derive(Clone)]
 struct View {
     connection: gtk::Label,
-    summary: gtk::Label,
+    connection_icon: gtk::Image,
+    total_count: gtk::Label,
+    allowed_count: gtk::Label,
+    blocked_count: gtk::Label,
     help: gtk::Label,
     device_area: gtk::Box,
     refresh_button: gtk::Button,
+    controllers_expanded: Rc<Cell<bool>>,
+    last_devices: Rc<RefCell<Option<Vec<usbguard::Device>>>>,
 }
 
 fn main() {
@@ -24,18 +31,20 @@ fn main() {
 }
 
 fn build_window(application: &adw::Application) {
+    load_styles();
+
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title("PlugWard")
-        .default_width(800)
-        .default_height(680)
+        .default_width(900)
+        .default_height(740)
         .build();
 
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let header = adw::HeaderBar::new();
     let refresh_button = gtk::Button::builder()
         .icon_name("view-refresh-symbolic")
-        .tooltip_text("Refresh USB device list")
+        .tooltip_text("Refresh USB devices")
         .build();
     header.pack_end(&refresh_button);
     layout.append(&header);
@@ -44,68 +53,99 @@ fn build_window(application: &adw::Application) {
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
+    let clamp = adw::Clamp::new();
+    clamp.set_maximum_size(880);
+    clamp.set_tightening_threshold(640);
+    scroll.set_child(Some(&clamp));
     layout.append(&scroll);
 
-    let page = gtk::Box::new(gtk::Orientation::Vertical, 20);
-    page.set_margin_start(24);
-    page.set_margin_end(24);
-    page.set_margin_top(20);
-    page.set_margin_bottom(24);
-    scroll.set_child(Some(&page));
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 22);
+    page.set_margin_start(20);
+    page.set_margin_end(20);
+    page.set_margin_top(28);
+    page.set_margin_bottom(32);
+    clamp.set_child(Some(&page));
 
-    let heading = gtk::Label::new(Some("USB Security Center"));
-    heading.add_css_class("title-1");
-    heading.set_xalign(0.0);
-    page.append(&heading);
+    let title = gtk::Label::new(Some("USB Security Center"));
+    title.add_css_class("title-1");
+    title.set_xalign(0.0);
+    page.append(&title);
 
-    let introduction = gtk::Label::new(Some(
-        "See how USBGuard handles connected devices. PlugWard is read-only and never changes your security rules.",
+    let subtitle = gtk::Label::new(Some(
+        "Monitor USBGuard's authorization decisions. PlugWard never changes device rules.",
     ));
-    introduction.set_wrap(true);
-    introduction.set_xalign(0.0);
-    introduction.add_css_class("dim-label");
-    page.append(&introduction);
+    subtitle.add_css_class("dim-label");
+    subtitle.set_wrap(true);
+    subtitle.set_xalign(0.0);
+    page.append(&subtitle);
 
-    let overview = adw::PreferencesGroup::new();
-    overview.set_title("Connection");
-    let connection_row = adw::ActionRow::new();
-    connection_row.set_title("USBGuard");
+    let status_card = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    status_card.add_css_class("pw-status-card");
+    let connection_icon = gtk::Image::from_icon_name("network-transmit-receive-symbolic");
+    connection_icon.set_pixel_size(24);
+    status_card.append(&connection_icon);
+
+    let status_text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    status_text.set_hexpand(true);
+    let status_heading = gtk::Label::new(Some("USBGuard D-Bus connection"));
+    status_heading.add_css_class("caption");
+    status_heading.add_css_class("dim-label");
+    status_heading.set_xalign(0.0);
+    status_text.append(&status_heading);
     let connection = gtk::Label::new(Some("Checking…"));
-    connection.add_css_class("dim-label");
-    connection_row.add_suffix(&connection);
-    overview.add(&connection_row);
+    connection.add_css_class("heading");
+    connection.set_xalign(0.0);
+    status_text.append(&connection);
+    status_card.append(&status_text);
 
-    let summary_row = adw::ActionRow::new();
-    summary_row.set_title("Device summary");
-    let summary = gtk::Label::new(Some("Loading…"));
-    summary.add_css_class("dim-label");
-    summary_row.add_suffix(&summary);
-    overview.add(&summary_row);
-    page.append(&overview);
+    let read_only = gtk::Label::new(Some("READ ONLY"));
+    read_only.add_css_class("pw-readonly-pill");
+    read_only.set_tooltip_text(Some("PlugWard cannot authorize, block, or reject USB devices"));
+    status_card.append(&read_only);
+    page.append(&status_card);
 
-    let device_area = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let stats = gtk::FlowBox::new();
+    stats.set_homogeneous(true);
+    stats.set_max_children_per_line(3);
+    stats.set_min_children_per_line(1);
+    stats.set_column_spacing(12);
+    stats.set_row_spacing(12);
+    stats.set_selection_mode(gtk::SelectionMode::None);
+    let (total_tile, total_count) = metric_tile("Total devices", "drive-removable-media-symbolic");
+    let (allowed_tile, allowed_count) = metric_tile("Allowed", "emblem-ok-symbolic");
+    let (blocked_tile, blocked_count) = metric_tile("Blocked or rejected", "dialog-warning-symbolic");
+    stats.append(&total_tile);
+    stats.append(&allowed_tile);
+    stats.append(&blocked_tile);
+    page.append(&stats);
+
+    let device_area = gtk::Box::new(gtk::Orientation::Vertical, 20);
     page.append(&device_area);
 
     let help = gtk::Label::new(Some(
-        "PlugWard refreshes every 10 seconds. Your USBGuard daemon continues to enforce its own policy.",
+        "Refreshes every 10 seconds. A USB name or ID is reported information, not proof of identity.",
     ));
+    help.add_css_class("dim-label");
     help.set_wrap(true);
     help.set_xalign(0.0);
-    help.add_css_class("dim-label");
     page.append(&help);
 
     window.set_content(Some(&layout));
     let view = View {
         connection,
-        summary,
+        connection_icon,
+        total_count,
+        allowed_count,
+        blocked_count,
         help,
         device_area,
         refresh_button,
+        controllers_expanded: Rc::new(Cell::new(false)),
+        last_devices: Rc::new(RefCell::new(None)),
     };
 
     let button_view = view.clone();
-    view.refresh_button
-        .connect_clicked(move |_| refresh(&button_view));
+    view.refresh_button.connect_clicked(move |_| refresh(&button_view));
 
     let periodic_view = view.clone();
     glib::timeout_add_seconds_local(10, move || {
@@ -117,16 +157,49 @@ fn build_window(application: &adw::Application) {
     window.present();
 }
 
+fn load_styles() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(include_str!("../data/style.css"));
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+fn metric_tile(title: &str, icon_name: &str) -> (gtk::Box, gtk::Label) {
+    let tile = gtk::Box::new(gtk::Orientation::Vertical, 7);
+    tile.add_css_class("pw-metric");
+    tile.set_hexpand(true);
+    tile.set_size_request(145, 105);
+
+    let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.add_css_class("dim-label");
+    top.append(&icon);
+    let heading = gtk::Label::new(Some(title));
+    heading.add_css_class("dim-label");
+    heading.add_css_class("caption");
+    heading.set_xalign(0.0);
+    top.append(&heading);
+    tile.append(&top);
+
+    let number = gtk::Label::new(Some("—"));
+    number.add_css_class("title-1");
+    number.set_xalign(0.0);
+    tile.append(&number);
+    (tile, number)
+}
+
 fn refresh(view: &View) {
     if !view.refresh_button.is_sensitive() {
         return;
     }
-
     view.refresh_button.set_sensitive(false);
-    view.connection.set_text("Checking…");
 
-    // Only data crosses the worker/UI boundary. GTK widgets stay on the
-    // main thread; no privileged operation is performed by the worker.
+    // All D-Bus work happens off the UI thread; widgets never cross threads.
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(usbguard::list_devices());
@@ -177,61 +250,34 @@ fn connection_help(error: &str) -> (&'static str, &'static str) {
 }
 
 fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
-    while let Some(child) = view.device_area.first_child() {
-        view.device_area.remove(&child);
-    }
-
     match result {
         Ok(devices) => {
-            let allowed = devices.iter().filter(|device| device.target == "allow").count();
-            let blocked = devices
-                .iter()
-                .filter(|device| device.target == "block" || device.target == "reject")
-                .count();
-
+            let allowed = devices.iter().filter(|d| d.target == "allow").count();
+            let blocked = devices.iter().filter(|d| d.is_blocked()).count();
             view.connection.set_text("Connected");
-            view.summary.set_text(&format!(
-                "{} devices · {allowed} allowed · {blocked} blocked/rejected",
-                devices.len()
-            ));
+            view.connection_icon.set_icon_name(Some("emblem-ok-symbolic"));
+            view.total_count.set_text(&devices.len().to_string());
+            view.allowed_count.set_text(&allowed.to_string());
+            view.blocked_count.set_text(&blocked.to_string());
             view.help.set_text(
-                "Only USBGuard decides whether a device can connect. PlugWard reads its state every 10 seconds; it does not approve devices.",
+                "Updates every 10 seconds · Names and USB IDs can be spoofed · Only USBGuard enforces device access.",
             );
 
-            let group = adw::PreferencesGroup::new();
-            group.set_title("Connected devices");
-
-            if devices.is_empty() {
-                let row = adw::ActionRow::new();
-                row.set_title("No devices returned");
-                row.set_subtitle("USBGuard reported an empty device list.");
-                group.add(&row);
+            if view.last_devices.borrow().as_ref() != Some(&devices) {
+                clear_box(&view.device_area);
+                populate_devices(view, &devices);
+                *view.last_devices.borrow_mut() = Some(devices);
             }
-
-            for device in devices {
-                let row = adw::ActionRow::new();
-                row.set_title(&device.name);
-                row.set_subtitle(&format!(
-                    "USB ID {} · Port {} · USBGuard device #{}",
-                    device.usb_id, device.port, device.number
-                ));
-
-                let status = gtk::Label::new(Some(device.status()));
-                status.add_css_class("caption");
-                match device.target.as_str() {
-                    "allow" => status.add_css_class("success"),
-                    "block" | "reject" => status.add_css_class("error"),
-                    _ => status.add_css_class("dim-label"),
-                }
-                row.add_suffix(&status);
-                group.add(&row);
-            }
-
-            view.device_area.append(&group);
         }
         Err(error) => {
-            view.connection.set_text("Not available");
-            view.summary.set_text("No device data");
+            view.connection.set_text("Connection unavailable");
+            view.connection_icon.set_icon_name(Some("dialog-warning-symbolic"));
+            view.total_count.set_text("—");
+            view.allowed_count.set_text("—");
+            view.blocked_count.set_text("—");
+            *view.last_devices.borrow_mut() = None;
+            clear_box(&view.device_area);
+
             let (title, guidance) = connection_help(&error);
             view.help.set_text(guidance);
             let group = adw::PreferencesGroup::new();
@@ -245,6 +291,95 @@ fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
     }
 }
 
+fn clear_box(container: &gtk::Box) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+}
+
+fn populate_devices(view: &View, devices: &[usbguard::Device]) {
+    let blocked: Vec<_> = devices.iter().filter(|device| device.is_blocked()).collect();
+    let peripherals: Vec<_> = devices
+        .iter()
+        .filter(|device| device.kind() != usbguard::DeviceKind::Controller && !device.is_blocked())
+        .collect();
+    let controllers: Vec<_> = devices
+        .iter()
+        .filter(|device| device.kind() == usbguard::DeviceKind::Controller && !device.is_blocked())
+        .collect();
+
+    if !blocked.is_empty() {
+        let group = adw::PreferencesGroup::new();
+        group.set_title("Blocked or rejected");
+        group.set_description(Some("USBGuard denied access to these devices."));
+        for device in blocked {
+            group.add(&device_row(device));
+        }
+        view.device_area.append(&group);
+    }
+
+    let devices_group = adw::PreferencesGroup::new();
+    devices_group.set_title("Devices");
+    devices_group.set_description(Some("Devices authorized by USBGuard, or awaiting a decision."));
+    if peripherals.is_empty() {
+        let empty = adw::ActionRow::new();
+        empty.set_title("No peripheral devices to show");
+        empty.set_subtitle("Connect a USB device to see its USBGuard decision.");
+        devices_group.add(&empty);
+    }
+    for device in peripherals {
+        devices_group.add(&device_row(device));
+    }
+    view.device_area.append(&devices_group);
+
+    if !controllers.is_empty() {
+        let group = adw::PreferencesGroup::new();
+        group.set_title("System components");
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&format!("USB root controllers ({})", controllers.len()));
+        expander.set_subtitle("Internal USB host controllers · Expand for details");
+        expander.set_expanded(view.controllers_expanded.get());
+        for controller in controllers {
+            expander.add_row(&device_row(controller));
+        }
+        let expanded_state = view.controllers_expanded.clone();
+        expander.connect_expanded_notify(move |row| {
+            expanded_state.set(row.is_expanded());
+        });
+        group.add(&expander);
+        view.device_area.append(&group);
+    }
+
+    if devices.is_empty() {
+        let group = adw::PreferencesGroup::new();
+        group.set_title("No USB devices reported");
+        view.device_area.append(&group);
+    }
+}
+
+fn device_row(device: &usbguard::Device) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&device.display_name());
+    row.set_subtitle(&format!(
+        "{} · USB ID {} · Port {} · USBGuard #{}",
+        device.connection_label(), device.usb_id, device.port, device.number
+    ));
+
+    let icon = gtk::Image::from_icon_name(device.icon_name());
+    icon.set_pixel_size(22);
+    icon.add_css_class("pw-device-icon");
+    row.add_prefix(&icon);
+
+    let status = gtk::Label::new(Some(device.status()));
+    status.add_css_class("pw-pill");
+    match device.target.as_str() {
+        "allow" => status.add_css_class("pw-allowed"),
+        "block" | "reject" => status.add_css_class("pw-blocked"),
+        _ => status.add_css_class("pw-unknown"),
+    }
+    row.add_suffix(&status);
+    row
+}
 #[cfg(test)]
 mod connection_tests {
     use super::connection_help;
