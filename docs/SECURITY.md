@@ -39,3 +39,16 @@ The only added D-Bus write method is `applyDevicePolicy(id, target=0, permanent=
 - The request includes `permanent=false`. No on-disk rule is intentionally appended. Recheck both the device list and the saved rules during manual Fedora tests.
 - A successful D-Bus response and a confirmed matching post-write listing are needed before the interface reports authorization confirmed. An ambiguous outcome is labeled **unverified**, not as a guaranteed failure.
 - Do not test with unknown/found USB media. Use a known-safe, nonessential, personally owned test peripheral.
+
+## Interactive authentication
+
+Only the `applyDevicePolicy(id, 0, false)` call triggered by an explicit
+confirmation sends `Gio.DBusCallFlags.ALLOW_INTERACTIVE_AUTHORIZATION`.
+USBGuard's read-only `listDevices` calls never request interactive privileges.
+This allows the system's existing Polkit policy to show an authentication
+prompt where permitted. It does not grant authorization by itself and does not
+change the host's D-Bus, Polkit, USBGuard IPC or permanent policy settings.
+
+AccessDenied can originate at multiple authorization layers; a denial is
+not a reason to add broad passwordless rules. Confirm the device remains blocked
+before diagnosing the local policies. Details are in the README.
