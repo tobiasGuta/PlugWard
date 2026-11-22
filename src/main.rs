@@ -3,6 +3,7 @@ mod details;
 mod authorization;
 mod activity;
 mod security;
+mod policy;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -38,6 +39,11 @@ fn main() {
 
 fn build_window(application: &adw::Application) {
     load_styles();
+    if let Some(display) = gtk::gdk::Display::default() {
+        let icons = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/icons");
+        gtk::IconTheme::for_display(&display).add_search_path(icons);
+    }
+    gtk::Window::set_default_icon_name("io.github.tobiasguta.PlugWard");
 
     let window = adw::ApplicationWindow::builder()
         .application(application)
@@ -86,7 +92,7 @@ fn build_window(application: &adw::Application) {
     page.append(&title);
 
     let subtitle = gtk::Label::new(Some(
-        "Monitor USBGuard devices and authorize selected blocked peripherals for the current connection only.",
+        "Monitor USB activity, review security posture, and manage explicitly confirmed USBGuard decisions.",
     ));
     subtitle.add_css_class("dim-label");
     subtitle.set_wrap(true);
@@ -112,9 +118,9 @@ fn build_window(application: &adw::Application) {
     status_text.append(&connection);
     status_card.append(&status_text);
 
-    let read_only = gtk::Label::new(Some("TEMPORARY ONLY"));
+    let read_only = gtk::Label::new(Some("SECURE CONTROLS"));
     read_only.add_css_class("pw-readonly-pill");
-    read_only.set_tooltip_text(Some("Only confirmed temporary approval of eligible external devices is available; no persistent USBGuard policy changes"));
+    read_only.set_tooltip_text(Some("Device actions require user confirmation, system authentication, and USBGuard verification"));
     status_card.append(&read_only);
     page.append(&status_card);
 
