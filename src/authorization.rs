@@ -52,6 +52,73 @@ pub fn eligibility(device: &Device) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Revoke this *connection* only. This does not remove any permanent rule.
+pub fn block_eligibility(device: &Device) -> Result<(), &'static str> {
+    if device.target != "allow" {
+        return Err("Only currently authorized devices can be blocked.");
+    }
+    if device.connection_type != "hotplug"
+        || device.port == "Not reported"
+        || device.kind() != DeviceKind::Storage
+        || device.interfaces.len() != 1
+        || device.hash.is_empty()
+        || device.parent_hash.is_empty()
+    {
+        return Err("Only nonessential, single-interface external USB storage devices can be blocked in this preview.");
+    }
+    Ok(())
+}
+
+/// Must run on a worker thread after a separate confirmation.
+pub fn block_connection(selected: &Device) -> Result<AllowResult, String> {
+    block_eligibility(selected).map_err(str::to_string)?;
+    let devices = usbguard::list_devices()?;
+    let current = devices
+        .iter()
+        .find(|device| device.number == selected.number)
+        .ok_or_else(|| "Device was disconnected; no action taken.".to_string())?;
+    if !selected.matches_snapshot(current) {
+        return Err("Device attributes, port, or policy changed; no action taken.".to_string());
+    }
+    block_eligibility(current).map_err(str::to_string)?;
+
+    let bus = gio::bus_get_sync(gio::BusType::System, None::<&gio::Cancellable>)
+        .map_err(|e| format!("Cannot connect to USBGuard D-Bus: {e}"))?;
+    let response = bus.call_sync(
+        Some(SERVICE),
+        PATH,
+        INTERFACE,
+        "applyDevicePolicy",
+        Some(&(selected.number, 1u32, false).to_variant()),
+        None,
+        confirmed_write_flags(),
+        120_000,
+        None::<&gio::Cancellable>,
+    ).map_err(|e| format!(
+        "USBGuard did not confirm blocking: {e}. Inspect device state before retrying."
+    ))?;
+    let _: (u32,) = response.get().ok_or_else(||
+        "Unexpected USBGuard block response; inspect current state.".to_string()
+    )?;
+
+    match usbguard::list_devices() {
+        Ok(list) => {
+            let mut expected = selected.clone();
+            expected.target = "block".to_string();
+            if list.iter().any(|device| expected.matches_snapshot(device)) {
+                Ok(AllowResult::Confirmed)
+            } else {
+                Ok(AllowResult::Unverified(
+                    "USBGuard acknowledged the block, but the next device listing did not confirm it.".to_string(),
+                ))
+            }
+        }
+        Err(e) => Ok(AllowResult::Unverified(format!(
+            "USBGuard acknowledged the request but verification failed: {e}"
+        ))),
+    }
+}
+
 /// Pre-write check: never act on an earlier list entry whose attributes, port
 /// or authorization status have changed. A match does not eliminate TOCTOU.
 fn validate_current<'a>(
@@ -236,6 +303,21 @@ mod tests {
         assert!(!gio::DBusCallFlags::NONE.contains(
             gio::DBusCallFlags::ALLOW_INTERACTIVE_AUTHORIZATION
         ));
+    }
+
+    #[test]
+    fn only_safe_current_storage_devices_can_be_blocked() {
+        let mut storage = sample();
+        storage.target = "allow".to_string();
+        assert!(block_eligibility(&storage).is_ok());
+        storage.connection_type = "hardwired".to_string();
+        assert!(block_eligibility(&storage).is_err());
+        storage.connection_type = "hotplug".to_string();
+        storage.interfaces.push("03:01:02".to_string());
+        assert!(block_eligibility(&storage).is_err());
+        storage.interfaces = vec!["08:06:50".to_string()];
+        storage.target = "block".to_string();
+        assert!(block_eligibility(&storage).is_err());
     }
 
 }

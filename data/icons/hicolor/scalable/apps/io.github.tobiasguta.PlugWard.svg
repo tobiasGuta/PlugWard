@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="PlugWard application icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#168bff" offset="0"/>
+      <stop stop-color="#124ddd" offset=".52"/>
+      <stop stop-color="#092784" offset="1"/>
+    </linearGradient>
+    <linearGradient id="lock" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#16f8e0" offset="0"/>
+      <stop stop-color="#06badb" offset="1"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="122" height="122" rx="28" fill="url(#bg)"/>
+  <path d="M64 16 104 35v28c0 23-16 41-40 52C40 104 24 86 24 63V35z" fill="#072f9c" fill-opacity=".35" stroke="#fff" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M64 38v43" stroke="white" stroke-width="7" stroke-linecap="round"/>
+  <path d="m56 45 8-11 8 11" fill="white"/>
+  <path d="M64 75 43 62V50M64 70 85 59V48" fill="none" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="43" cy="47" r="5" fill="white"/>
+  <rect x="81" y="42" width="9" height="9" rx="1.5" fill="white"/>
+  <path d="M54 88v-8a10 10 0 0 1 20 0v8" fill="none" stroke="#f0fbff" stroke-width="6" stroke-linecap="round"/>
+  <rect x="49" y="85" width="30" height="22" rx="6" fill="url(#lock)"/>
+  <path d="M64 91a3 3 0 0 0-1.5 5.6L61 101h6l-1.5-4.4A3 3 0 0 0 64 91z" fill="#073d8c"/>
+</svg>

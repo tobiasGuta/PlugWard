@@ -4,7 +4,38 @@
 
 PlugWard is an experimental, native GNOME desktop dashboard for [USBGuard](https://usbguard.github.io/). It is written in Rust using GTK4 and libadwaita.
 
-> **Development status:** v0.3 alpha 2, with limited confirmed temporary authorization. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+> **Development status:** v0.4 alpha, security-focused preview; permanent-trust and revocation features have not yet passed live Fedora validation. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+
+## v0.4 alpha: USB Security Center
+
+The v0.4 alpha adds five requested capabilities while keeping USBGuard itself as the policy enforcement service:
+
+- **Activity** — a session-only timeline of device arrivals, removals, and authorization transitions observed through USBGuard device-list snapshots. The dashboard samples every **3 seconds**. It can miss fast events, is not persistent, and must not be treated as an audit log.
+- **Security** — read-only checks of the USBGuard systemd service state, boot enablement, and the daemon-reported \`ImplicitPolicyTarget\`. It reports **Unable to fully verify** when anything cannot be checked; even a favorable result is not proof that all policy rules are safe.
+- **Device inspector** — switch between **Overview** and **Advanced** for easy-to-read status and technical USB descriptors/hashes.
+- **Block this connection** — temporary block for an authorized, nonessential, single-interface external USB storage device, with confirmation, recheck and post-action verification. **This does not delete any pre-existing permanent allow rule**; the device may be authorized on reconnection.
+- **Permanent Trust** — for a personally trusted, single-interface external storage device only. It displays the exact proposed allow rule, requires a nonempty serial, USB ID, hash, parent hash, interface and specific port, rechecks the selected device, verifies the daemon reports default-deny, and saves an **0600 user-owned policy snapshot** before calling USBGuard's \`appendRule\` via interactive Polkit. The rule is re-read afterward. A successful result offers **Undo this trust**, which only removes the exact rule ID and content PlugWard created, after another confirmation. **Undo is conditional on USBGuard authorization and is not guaranteed**.
+
+**Critical:** Never test with unknown/found USB devices, your only keyboard/mouse, a USB hub, or built-in devices. USB serials, hashes, ports and interface descriptors are not cryptographic proof of authenticity. Client-side rechecks cannot eliminate device-ID reuse or a disconnect during a policy write.
+
+**Before the first permanent-trust test**, independently back up your verified policy:
+
+\`\`\`bash
+sudo cp -a /etc/usbguard/rules.conf /etc/usbguard/rules.conf.before-plugward-v04
+sudo usbguard list-rules
+\`\`\`
+
+PlugWard's own snapshots are stored under \`$XDG_DATA_HOME/plugward/policy-backups\`, or \`~/.local/share/plugward/policy-backups\` if XDG_DATA_HOME is unset. Snapshots are **not** a substitute for backing up the original rules file; they contain device metadata, so keep them private. After using Permanent Trust, inspect \`sudo usbguard list-rules\`, and after Undo recheck that the created rule is absent. A new rule may not authorize the currently blocked device until it is reconnected; do not assume it did.
+
+### PlugWard app icon and GNOME launcher
+
+PlugWard includes its own USB-and-shield SVG icon, stored at \`data/icons/hicolor/scalable/apps/io.github.tobiasguta.PlugWard.svg\`. To install the app, launcher, and icon for **your own user account only**, run:
+
+\`\`\`bash
+bash scripts/install-user.sh
+\`\`\`
+
+This compiles the release binary and installs it to \`~/.local/bin\`, plus a \`~/.local/share/applications\` launcher and \`~/.local/share/icons\` icon. It **does not** change USBGuard policies, services, Polkit, or system packages. Depending on your GNOME session you may need to log out and back in to see the launcher.
 
 ## v0.3 alpha 2: guarded Allow Once (stage 2 preview)
 
