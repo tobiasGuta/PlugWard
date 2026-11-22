@@ -1,5 +1,6 @@
 mod usbguard;
 mod details;
+mod authorization;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -74,7 +75,7 @@ fn build_window(application: &adw::Application) {
     page.append(&title);
 
     let subtitle = gtk::Label::new(Some(
-        "Monitor USBGuard's authorization decisions. PlugWard never changes device rules.",
+        "Monitor USBGuard devices and authorize selected blocked peripherals for the current connection only.",
     ));
     subtitle.add_css_class("dim-label");
     subtitle.set_wrap(true);
@@ -100,9 +101,9 @@ fn build_window(application: &adw::Application) {
     status_text.append(&connection);
     status_card.append(&status_text);
 
-    let read_only = gtk::Label::new(Some("READ ONLY"));
+    let read_only = gtk::Label::new(Some("TEMPORARY ONLY"));
     read_only.add_css_class("pw-readonly-pill");
-    read_only.set_tooltip_text(Some("PlugWard cannot authorize, block, or reject USB devices"));
+    read_only.set_tooltip_text(Some("Only confirmed temporary approval of eligible external devices is available; no persistent USBGuard policy changes"));
     status_card.append(&read_only);
     page.append(&status_card);
 
@@ -263,7 +264,7 @@ fn render(view: &View, result: Result<Vec<usbguard::Device>, String>) {
             view.allowed_count.set_text(&allowed.to_string());
             view.blocked_count.set_text(&blocked.to_string());
             view.help.set_text(
-                "Updates every 10 seconds · Names and USB IDs can be spoofed · Only USBGuard enforces device access.",
+                "Updates every 10 seconds · Names and USB IDs can be spoofed · USBGuard enforces access; PlugWard can request temporary approval with confirmation.",
             );
 
             if view.last_devices.borrow().as_ref() != Some(&devices) {
