@@ -6,12 +6,19 @@ PlugWard is an experimental, native GNOME desktop dashboard for [USBGuard](https
 
 > **Development status:** Early, read-only preview. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
 
-## What the first version does
+## What's new in v0.2 (development preview)
 
-- Show connected USB devices and their current USBGuard authorization targets
-- Display device name, USB vendor/product ID, port, and USBGuard device number
-- Refresh every 10 seconds, with a manual Refresh button
-- Explain when the USBGuard D-Bus bridge is missing or cannot be accessed
+- Adaptive, centered GNOME dashboard that avoids stretching across large monitors
+- Read-only connection state and total/allowed/blocked summary cards
+- Icons and descriptive categories inferred from reported USB interface classes
+- Separately emphasized blocked and rejected devices
+- Peripherals shown first, with USB root controllers tucked into a collapsible group
+- Expanded/collapsed state retained during automatic refreshes
+- Updated every 10 seconds and manually with Refresh; unchanged lists keep their current focus/expanded state
+- Safer rendering of USB-reported names (display length cap, bidi-control filtering, no markup execution)
+- Clear errors for missing Fedora D-Bus bridge and access-denied situations
+
+**Important:** USB names, IDs, and class descriptors can be spoofed. These categories are **display hints**, not proof of device identity. A working dashboard connection does **not** independently verify that USBGuard is configured with a default-deny policy.
 
 PlugWard **never** authorizes devices, changes rules, starts/stops USBGuard, or elevates its own privileges.
 
