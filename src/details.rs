@@ -10,6 +10,7 @@ use adw::prelude::*;
 use gtk::glib;
 
 use crate::authorization::{self, AllowResult};
+use crate::policy::{self, TrustResult, TrustReceipt};
 use crate::usbguard::{self, Device};
 
 pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
@@ -115,6 +116,47 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
         action.add_suffix(&button);
         approval.add(&action);
         overview.append(&approval);
+    }
+
+    // These actions are intentionally unavailable on built-in components.
+    // The action backend also repeats eligibility checks against a fresh list.
+    if authorization::block_eligibility(device).is_ok() {
+        let block_group = adw::PreferencesGroup::new();
+        block_group.set_title("Revoke current access");
+        block_group.set_description(Some(
+            "Block this connection only. This does not remove an existing permanent allow rule.",
+        ));
+        let row = adw::ActionRow::new();
+        row.set_title("Block this connection");
+        let button = gtk::Button::with_label("Block…");
+        button.add_css_class("destructive-action");
+        let selected = device.clone();
+        let parent = window.clone();
+        button.connect_clicked(move |_| show_policy_confirmation(&parent, selected.clone(), PolicyAction::Block));
+        row.add_suffix(&button);
+        block_group.add(&row);
+        overview.append(&block_group);
+    }
+
+    if let Ok(rule) = policy::scoped_rule(device) {
+        let trust_group = adw::PreferencesGroup::new();
+        trust_group.set_title("Permanent trust");
+        trust_group.set_description(Some(
+            "Adds a strict, port-specific persistent rule after confirmation and a user-owned policy backup. Undo is offered after verification.",
+        ));
+        let row = adw::ActionRow::new();
+        row.set_title("Trust this USB storage device across connections");
+        row.set_subtitle("Only this serial, USB ID, hash, parent, interface, and port");
+        let button = gtk::Button::with_label("Review rule…");
+        let selected = device.clone();
+        let parent = window.clone();
+        button.connect_clicked(move |_| show_policy_confirmation(&parent, selected.clone(), PolicyAction::Trust));
+        row.add_suffix(&button);
+        trust_group.add(&row);
+        overview.append(&trust_group);
+        // The rule preview is rendered in the final confirmation, not hidden
+        // behind an unsafe button that might apply unknown broad defaults.
+        let _ = rule;
     }
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -362,5 +404,283 @@ fn run_allow_once(parent: &gtk::Window, snapshot: Device) {
             }
             Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
         }
+    });
+}
+
+
+#[derive(Clone, Copy)]
+enum PolicyAction {
+    Block,
+    Trust,
+}
+
+#[derive(Debug)]
+enum PolicyOutcome {
+    Blocked(AllowResult),
+    Trusted(TrustResult),
+}
+
+fn show_policy_confirmation(parent: &gtk::Window, device: Device, action: PolicyAction) {
+    let title = match action {
+        PolicyAction::Block => "Block this USB connection?",
+        PolicyAction::Trust => "Permanently trust this USB storage device?",
+    };
+    let dialog = gtk::Window::builder()
+        .title("Confirm USBGuard policy action")
+        .default_width(520)
+        .modal(true)
+        .transient_for(parent)
+        .build();
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_start(24);
+    body.set_margin_end(24);
+    body.set_margin_top(20);
+    body.set_margin_bottom(20);
+
+    let heading = gtk::Label::new(Some(title));
+    heading.add_css_class("title-2");
+    heading.set_xalign(0.0);
+    heading.set_wrap(true);
+    body.append(&heading);
+
+    let scope = match action {
+        PolicyAction::Block => "This blocks the currently connected device only. A pre-existing permanent allow rule may authorize it again after reconnection. Internal devices and non-storage classes are excluded.",
+        PolicyAction::Trust => "This stores a persistent USBGuard allow rule, affecting future connections and surviving reboot. USB descriptors and hashes can be spoofed. You must independently trust this physical device.",
+    };
+    let text = gtk::Label::new(Some(&format!(
+        "{}\n\nReported: {}\nUSB ID: {}\nPort: {}\n\n{}",
+        scope,
+        device.display_name(),
+        Device::display_attribute(&device.usb_id),
+        Device::display_attribute(&device.port),
+        if matches!(action, PolicyAction::Trust) {
+            "An on-disk user-owned policy snapshot is required before making this change."
+        } else {
+            "No existing permanent USBGuard rule will be changed."
+        }
+    )));
+    text.set_wrap(true);
+    text.set_xalign(0.0);
+    body.append(&text);
+
+    if matches!(action, PolicyAction::Trust) {
+        let preview = policy::scoped_rule(&device).unwrap_or_else(|error| format!("Rule unavailable: {error}"));
+        let rule = gtk::Label::new(Some(&format!("Exact rule to append:\n{preview}")));
+        rule.set_selectable(true);
+        rule.set_wrap(true);
+        rule.set_wrap_mode(gtk::pango::WrapMode::Char);
+        rule.set_xalign(0.0);
+        rule.add_css_class("pw-detail-field");
+        body.append(&rule);
+    }
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    let label = match action {
+        PolicyAction::Block => "Block connection",
+        PolicyAction::Trust => "Save permanent trust rule",
+    };
+    let confirm = gtk::Button::with_label(label);
+    if matches!(action, PolicyAction::Block) {
+        confirm.add_css_class("destructive-action");
+    } else {
+        confirm.add_css_class("suggested-action");
+    }
+    let cancel_dialog = dialog.clone();
+    cancel.connect_clicked(move |_| cancel_dialog.close());
+    let confirm_dialog = dialog.clone();
+    let parent = parent.clone();
+    confirm.connect_clicked(move |_| {
+        confirm_dialog.close();
+        run_policy_action(&parent, device.clone(), action);
+    });
+    actions.append(&cancel);
+    actions.append(&confirm);
+    body.append(&actions);
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
+fn run_policy_action(parent: &gtk::Window, device: Device, action: PolicyAction) {
+    let window = gtk::Window::builder()
+        .title("USBGuard policy result")
+        .default_width(520)
+        .modal(true)
+        .transient_for(parent)
+        .build();
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_start(24);
+    body.set_margin_end(24);
+    body.set_margin_top(22);
+    body.set_margin_bottom(22);
+    let heading = gtk::Label::new(Some("Checking device and contacting USBGuard…"));
+    heading.add_css_class("heading");
+    heading.set_xalign(0.0);
+    heading.set_wrap(true);
+    body.append(&heading);
+    let description = gtk::Label::new(Some(
+        "This action may require the system's existing administrator authentication.",
+    ));
+    description.set_wrap(true);
+    description.set_xalign(0.0);
+    description.set_selectable(true);
+    body.append(&description);
+
+    let action_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    action_box.set_halign(gtk::Align::End);
+    let undo = gtk::Button::with_label("Undo this trust…");
+    undo.set_visible(false);
+    undo.add_css_class("destructive-action");
+    let close = gtk::Button::with_label("Close");
+    close.set_sensitive(false);
+    let close_window = window.clone();
+    close.connect_clicked(move |_| close_window.close());
+    action_box.append(&undo);
+    action_box.append(&close);
+    body.append(&action_box);
+    window.set_child(Some(&body));
+    window.present();
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = match action {
+            PolicyAction::Block => authorization::block_connection(&device).map(PolicyOutcome::Blocked),
+            PolicyAction::Trust => policy::trust_permanently(&device).map(PolicyOutcome::Trusted),
+        };
+        let _ = sender.send(result);
+    });
+
+    glib::timeout_add_local(Duration::from_millis(150), move || {
+        match receiver.try_recv() {
+            Ok(Ok(PolicyOutcome::Blocked(AllowResult::Confirmed))) => {
+                heading.set_text("Current connection blocked");
+                description.set_text(
+                    "USBGuard confirmed the device is blocked for this connection. This has not removed any permanent allow rule.",
+                );
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Ok(PolicyOutcome::Blocked(AllowResult::Unverified(message)))) => {
+                heading.set_text("Block outcome not verified");
+                description.set_text(&message);
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Ok(PolicyOutcome::Trusted(TrustResult::Confirmed(receipt)))) => {
+                heading.set_text("Permanent rule saved and verified");
+                description.set_text(&format!(
+                    "Rule #{} is present in USBGuard's policy. User-owned backup: {}\n\nA newly appended rule does not guarantee the current connection was authorized. Reconnect the trusted device to test future matching. Undo can remove only this exact new rule.",
+                    receipt.rule_id, receipt.backup_path.display()
+                ));
+                undo.set_visible(true);
+                let current = receipt.clone();
+                let parent = window.clone();
+                undo.connect_clicked(move |_| confirm_undo(&parent, current.clone()));
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Ok(PolicyOutcome::Trusted(TrustResult::Unverified(message)))) => {
+                heading.set_text("Persistent policy change not verified");
+                description.set_text(&message);
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Ok(Err(error)) => {
+                heading.set_text("USBGuard rejected or could not verify the action");
+                description.set_text(&Device::display_diagnostic(&error));
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Disconnected) => {
+                heading.set_text("Result unavailable");
+                description.set_text("Inspect USBGuard's current policy and device list before trying again.");
+                close.set_sensitive(true);
+                glib::ControlFlow::Break
+            }
+            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+        }
+    });
+}
+
+fn confirm_undo(parent: &gtk::Window, receipt: TrustReceipt) {
+    let dialog = gtk::Window::builder()
+        .title("Undo permanent trust")
+        .default_width(450)
+        .modal(true)
+        .transient_for(parent)
+        .build();
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_start(20);
+    body.set_margin_end(20);
+    body.set_margin_top(20);
+    body.set_margin_bottom(20);
+    let text = gtk::Label::new(Some(&format!(
+        "Remove the exact USBGuard rule #{} created by PlugWard?\n\nThis affects future connections. A currently authorized device may remain active until it is unplugged or separately blocked.",
+        receipt.rule_id
+    )));
+    text.set_xalign(0.0);
+    text.set_wrap(true);
+    body.append(&text);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    let proceed = gtk::Button::with_label("Remove this rule");
+    proceed.add_css_class("destructive-action");
+    let cancel_dialog = dialog.clone();
+    cancel.connect_clicked(move |_| cancel_dialog.close());
+    let confirm_dialog = dialog.clone();
+    let result_parent = parent.clone();
+    proceed.connect_clicked(move |_| {
+        confirm_dialog.close();
+        run_undo(&result_parent, receipt.clone());
+    });
+    actions.append(&cancel);
+    actions.append(&proceed);
+    body.append(&actions);
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
+fn run_undo(parent: &gtk::Window, receipt: TrustReceipt) {
+    let dialog = gtk::Window::builder()
+        .title("Undo trust result")
+        .default_width(440)
+        .modal(true)
+        .transient_for(parent)
+        .build();
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    body.set_margin_start(20);
+    body.set_margin_end(20);
+    body.set_margin_top(20);
+    body.set_margin_bottom(20);
+    let result = gtk::Label::new(Some("Verifying the exact policy rule before removal…"));
+    result.set_xalign(0.0);
+    result.set_wrap(true);
+    body.append(&result);
+    let close = gtk::Button::with_label("Close");
+    close.set_sensitive(false);
+    close.set_halign(gtk::Align::End);
+    let close_dialog = dialog.clone();
+    close.connect_clicked(move |_| close_dialog.close());
+    body.append(&close);
+    dialog.set_child(Some(&body));
+    dialog.present();
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(policy::undo_trust(&receipt));
+    });
+    glib::timeout_add_local(Duration::from_millis(150), move || {
+        match receiver.try_recv() {
+            Ok(Ok(true)) => result.set_text("Exact rule removed. Future connections will be evaluated against the remaining USBGuard policy."),
+            Ok(Ok(false)) => result.set_text("USBGuard did not confirm rule removal. Inspect current policy."),
+            Ok(Err(error)) => result.set_text(&Device::display_diagnostic(&error)),
+            Err(TryRecvError::Disconnected) => result.set_text("Unable to determine removal result."),
+            Err(TryRecvError::Empty) => return glib::ControlFlow::Continue,
+        }
+        close.set_sensitive(true);
+        glib::ControlFlow::Break
     });
 }
