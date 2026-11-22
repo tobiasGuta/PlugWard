@@ -1,4 +1,5 @@
 mod usbguard;
+mod details;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -10,6 +11,7 @@ use gtk::glib;
 
 #[derive(Clone)]
 struct View {
+    parent: adw::ApplicationWindow,
     connection: gtk::Label,
     connection_icon: gtk::Image,
     total_count: gtk::Label,
@@ -132,6 +134,7 @@ fn build_window(application: &adw::Application) {
 
     window.set_content(Some(&layout));
     let view = View {
+        parent: window.clone(),
         connection,
         connection_icon,
         total_count,
@@ -313,7 +316,7 @@ fn populate_devices(view: &View, devices: &[usbguard::Device]) {
         group.set_title("Blocked or rejected");
         group.set_description(Some("USBGuard denied access to these devices."));
         for device in blocked {
-            group.add(&device_row(device));
+            group.add(&device_row(device, &view.parent));
         }
         view.device_area.append(&group);
     }
@@ -328,7 +331,7 @@ fn populate_devices(view: &View, devices: &[usbguard::Device]) {
         devices_group.add(&empty);
     }
     for device in peripherals {
-        devices_group.add(&device_row(device));
+        devices_group.add(&device_row(device, &view.parent));
     }
     view.device_area.append(&devices_group);
 
@@ -340,7 +343,7 @@ fn populate_devices(view: &View, devices: &[usbguard::Device]) {
         expander.set_subtitle("Internal USB host controllers · Expand for details");
         expander.set_expanded(view.controllers_expanded.get());
         for controller in controllers {
-            expander.add_row(&device_row(controller));
+            expander.add_row(&device_row(controller, &view.parent));
         }
         let expanded_state = view.controllers_expanded.clone();
         expander.connect_expanded_notify(move |row| {
@@ -357,7 +360,7 @@ fn populate_devices(view: &View, devices: &[usbguard::Device]) {
     }
 }
 
-fn device_row(device: &usbguard::Device) -> adw::ActionRow {
+fn device_row(device: &usbguard::Device, parent: &adw::ApplicationWindow) -> adw::ActionRow {
     let row = adw::ActionRow::new();
     row.set_title(&device.display_name());
     row.set_subtitle(&format!(
@@ -378,6 +381,14 @@ fn device_row(device: &usbguard::Device) -> adw::ActionRow {
         _ => status.add_css_class("pw-unknown"),
     }
     row.add_suffix(&status);
+
+    let inspect = gtk::Button::with_label("Details");
+    inspect.add_css_class("flat");
+    inspect.set_tooltip_text(Some("Inspect reported device attributes without changing USBGuard policy"));
+    let snapshot = device.clone();
+    let parent = parent.clone();
+    inspect.connect_clicked(move |_| details::show(&parent, &snapshot));
+    row.add_suffix(&inspect);
     row
 }
 #[cfg(test)]

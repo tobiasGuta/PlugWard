@@ -19,6 +19,10 @@ pub struct Device {
     pub port: String,
     pub connection_type: String,
     pub interfaces: Vec<String>,
+    /// Values reported by the device/USBGuard; never proof of authenticity.
+    pub serial: String,
+    pub hash: String,
+    pub parent_hash: String,
 }
 
 impl Device {
@@ -88,6 +92,34 @@ impl Device {
             "hotplug" => "Hotplug",
             _ => "Connection unknown",
         }
+    }
+
+
+    /// Compare a currently listed device to the snapshot displayed to the user.
+    /// Matching metadata is only a consistency check, NOT authentication of USB hardware.
+    /// It cannot prevent a device with spoofed descriptors or a reconnect between
+    /// this check and a later privileged request.
+    pub fn matches_snapshot(&self, current: &Self) -> bool {
+        self.number == current.number
+            && self.target == current.target
+            && self.usb_id == current.usb_id
+            && self.name == current.name
+            && self.port == current.port
+            && self.connection_type == current.connection_type
+            && self.interfaces == current.interfaces
+            && self.serial == current.serial
+            && self.hash == current.hash
+            && self.parent_hash == current.parent_hash
+    }
+
+    /// Sanitize a value for the GUI. Never use in authorization comparisons.
+    pub fn display_attribute(value: &str) -> String {
+        let clean: String = value
+            .chars()
+            .filter(|c| !c.is_control() && !is_bidi_control(*c))
+            .take(192)
+            .collect();
+        if clean.is_empty() { "Not reported".to_string() } else { clean }
     }
 
     pub fn priority(&self) -> u8 {
@@ -187,6 +219,9 @@ pub fn parse_device_rule(number: u32, rule: &str) -> Device {
         port: value("via-port").unwrap_or("Not reported").to_string(),
         connection_type: value("with-connect-type").unwrap_or("").to_string(),
         interfaces: interface_codes(&tokens),
+        serial: value("serial").unwrap_or("").to_string(),
+        hash: value("hash").unwrap_or("").to_string(),
+        parent_hash: value("parent-hash").unwrap_or("").to_string(),
     }
 }
 
@@ -311,6 +346,38 @@ mod tests {
     fn keeps_untrusted_markup_as_plain_text() {
         let fake = parse_device_rule(99, r#"block id 1234:5678 name "<script> USB""#);
         assert_eq!(fake.display_name(), "<script> USB");
+    }
+
+    #[test]
+    fn snapshot_comparison_detects_reconnected_or_retargeted_device() {
+        let initial = parse_device_rule(
+            16,
+            r#"block id 046d:c542 serial "" name "Wireless Receiver" hash "h1" parent-hash "parent" via-port "3-3" with-interface 03:01:02 with-connect-type "hotplug""#,
+        );
+        assert!(initial.matches_snapshot(&initial));
+        let port_changed = parse_device_rule(16, r#"block id 046d:c542 serial "" name "Wireless Receiver" hash "h1" parent-hash "parent" via-port "3-1" with-interface 03:01:02 with-connect-type "hotplug""#);
+        let number_changed = parse_device_rule(17, r#"block id 046d:c542 serial "" name "Wireless Receiver" hash "h1" parent-hash "parent" via-port "3-3" with-interface 03:01:02 with-connect-type "hotplug""#);
+        let hash_changed = parse_device_rule(16, r#"block id 046d:c542 serial "" name "Wireless Receiver" hash "h2" parent-hash "parent" via-port "3-3" with-interface 03:01:02 with-connect-type "hotplug""#);
+        let target_changed = parse_device_rule(16, r#"allow id 046d:c542 serial "" name "Wireless Receiver" hash "h1" parent-hash "parent" via-port "3-3" with-interface 03:01:02 with-connect-type "hotplug""#);
+        assert!(!initial.matches_snapshot(&port_changed));
+        assert!(!initial.matches_snapshot(&number_changed));
+        assert!(!initial.matches_snapshot(&hash_changed));
+        assert!(!initial.matches_snapshot(&target_changed));
+    }
+
+    #[test]
+    fn parses_serial_hash_and_parent_hash_for_details() {
+        let device = parse_device_rule(1, r#"allow id abcd:0123 serial "serial-1" name "Demo" hash "hash1" parent-hash "hash2""#);
+        assert_eq!(device.serial, "serial-1");
+        assert_eq!(device.hash, "hash1");
+        assert_eq!(device.parent_hash, "hash2");
+    }
+
+    #[test]
+    fn sanitizes_attributes_without_making_them_identity_tokens() {
+        let raw = "A\u{202e}B\nC";
+        assert_eq!(Device::display_attribute(raw), "ABC");
+        assert_eq!(Device::display_attribute(""), "Not reported");
     }
 
 }

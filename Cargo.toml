@@ -1,9 +1,9 @@
 [package]
 name = "plugward"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 edition = "2021"
 rust-version = "1.85"
-description = "An adaptive, read-only GNOME dashboard for USBGuard"
+description = "A GNOME USBGuard dashboard with read-only device inspection"
 license = "MIT"
 repository = "https://github.com/tobiasGuta/PlugWard"
 keywords = ["usbguard", "gnome", "usb", "security"]
