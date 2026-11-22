@@ -4,7 +4,17 @@
 
 PlugWard is an experimental, native GNOME desktop dashboard for [USBGuard](https://usbguard.github.io/). It is written in Rust using GTK4 and libadwaita.
 
-> **Development status:** Early, read-only preview. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+> **Development status:** v0.3 alpha, still read-only. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+
+## v0.3 alpha: device inspection (stage 1)
+
+- Every connected, blocked, or rejected device now has an accessible **Details** button.
+- Details show USBGuard authorization at opening, runtime device number, reported USB ID, name, port, connection type, serial, hash, parent hash, and interface codes.
+- **Recheck** queries USBGuard again and compares the current device record with the snapshot. A mismatch or disappearance is displayed clearly.
+- These are read-only operations. Rechecking does not authenticate the hardware, prevent descriptor spoofing, or eliminate device-reconnection races.
+- No USBGuard policy edits, device authorization operations, privileged helpers, or Polkit overrides have been added.
+
+This is **stage 1** of v0.3. See [authorization design](docs/AUTHORIZATION_DESIGN.md) for the security gates planned before implementing Allow Once / Block / Trust Permanently. These controls are **not available yet**.
 
 ## What's new in v0.2 (development preview)
 
