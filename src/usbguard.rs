@@ -122,6 +122,17 @@ impl Device {
         if clean.is_empty() { "Not reported".to_string() } else { clean }
     }
 
+    /// D-Bus errors can include untrusted device metadata; preserve enough
+    /// details to diagnose failures, without rendering control or bidi codes.
+    pub fn display_diagnostic(value: &str) -> String {
+        let clean: String = value
+            .chars()
+            .filter(|c| !c.is_control() && !is_bidi_control(*c))
+            .take(900)
+            .collect();
+        if clean.is_empty() { "No further details".to_string() } else { clean }
+    }
+
     pub fn priority(&self) -> u8 {
         match self.target.as_str() {
             "block" | "reject" => 0,
@@ -378,6 +389,13 @@ mod tests {
         let raw = "A\u{202e}B\nC";
         assert_eq!(Device::display_attribute(raw), "ABC");
         assert_eq!(Device::display_attribute(""), "Not reported");
+    }
+
+    #[test]
+    fn diagnostic_display_preserves_important_error_context() {
+        let message = format!("{}AccessDenied: Not authorized", "x".repeat(210));
+        assert!(Device::display_diagnostic(&message).contains("AccessDenied"));
+        assert_eq!(Device::display_diagnostic("x\u{202e}y"), "xy");
     }
 
 }
