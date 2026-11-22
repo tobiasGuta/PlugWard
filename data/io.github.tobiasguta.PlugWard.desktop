@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=PlugWard
-Comment=Read-only USBGuard device dashboard
+Comment=GNOME USB security and authorization manager
 Exec=plugward
-Icon=drive-removable-media
+Icon=io.github.tobiasguta.PlugWard
 Terminal=false
 Categories=System;Security;GTK;
 StartupNotify=true
