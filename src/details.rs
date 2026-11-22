@@ -18,9 +18,11 @@ pub fn show(parent: &adw::ApplicationWindow, device: &Device) {
     window.set_modal(true);
     window.set_transient_for(Some(parent));
 
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // Make the header the window's titlebar instead of placing a second
+    // header inside its content (GTK otherwise renders two titlebars).
     let header = gtk::HeaderBar::new();
-    root.append(&header);
+    window.set_titlebar(Some(&header));
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
