@@ -36,3 +36,14 @@ Supported: Fedora GNOME desktop with USBGuard and optional `usbguard-dbus`; read
 Not supported: permanent/temporary device authorization, policy editing, rule explanation based on full policy evaluation, persistent audit/event history, or system service management.
 
 Reference: https://usbguard.github.io/documentation/dbus/doc-org.usbguard.Devices.html
+
+## v0.3 alpha: device inspector
+
+- Each device row includes an explicit Details button. A modal native GTK window shows a snapshot from the most recently received USBGuard listing, not a live trusted identity.
+- Displayed metadata includes USB ID, reported name, serial, hashes, port, class interfaces, connection type, transient USBGuard number, and authorization state at opening.
+- A user-initiated Recheck performs another `listDevices("match")` call on a worker thread. It only reports whether the current record with the same numeric USBGuard number matches all parsed fields of the initial snapshot.
+- Changes in number, authorization target, port, hash, parent hash, serial, interface classes, name, or connection type invalidate the snapshot. The UI requests reopening details after mismatch.
+- A match can still result from spoofed USB descriptors or disconnect/reconnect between polling intervals. This is an observation aid, **not a security proof or authorization preflight guarantee**.
+- The GUI still contains zero USB authorization or policy-write calls.
+
+Future write actions are scoped in [AUTHORIZATION_DESIGN.md](AUTHORIZATION_DESIGN.md) and require separate review and tests. 
