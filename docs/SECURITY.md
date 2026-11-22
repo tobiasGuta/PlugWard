@@ -52,3 +52,17 @@ change the host's D-Bus, Polkit, USBGuard IPC or permanent policy settings.
 AccessDenied can originate at multiple authorization layers; a denial is
 not a reason to add broad passwordless rules. Confirm the device remains blocked
 before diagnosing the local policies. Details are in the README.
+
+
+## v0.4 security posture, activity and privileged actions
+
+- **History:** Activity is sampled locally in memory, starts at app launch, and can miss events between polls. No claim of complete auditing or persistent retention is made. Read errors reset the observation baseline rather than creating spurious disconnect events.
+- **Security checks:** Read-only systemd state and USBGuard's effective ImplicitPolicyTarget are probed. Any unavailable value stays *unverified*. Even an expected configuration cannot prove that all rules are safe or that the operating system is immune to malicious USBs.
+- **Blocking:** Only a currently allowed, external single-interface USB storage device is eligible. A separate confirmation, fresh device snapshot, Polkit decision, and post-write readback are required. The operation is temporary and does **not** remove persistent allow rules.
+- **Permanent trust:** Requires a strict, specific USB ID + serial + hash + parent hash + port + single mass-storage interface. Only personally trusted storage can be considered. The daemon must report active with implicit default block. Before appending a rule, the app writes a user-owned 0600 snapshot of current policy (separate from the original root-owned RuleFile). The exact generated rule is displayed for approval; broad wildcard rules are never generated.
+- **Policy ordering:** USBGuard evaluates rules in order. An appended rule might not override an earlier matching rule. The UI only reports rule presence after verifying the returned rule ID and exact text; it never guarantees every future USB connection will be allowed.
+- **Undo:** After a successful append, the result window offers a separate removal confirmation. It removes only the exact newly created rule if the runtime rule ID and content still match, using the system's existing Policy1.removeRule authorization. If removal permission is denied, the state is not silently modified and manual policy inspection is required. A crashed GUI or ambiguous D-Bus result may leave a rule behind.
+- **Races and spoofing:** All USB descriptor fields can be spoofed. Rechecking a device and issuing a write are separate calls; they are not atomic and cannot defeat sophisticated device impersonation.
+- **Least privilege:** No sudo/elevated GUI, custom root daemon, broad passwordless Polkit rule, or rewriting of /etc/usbguard configuration. All write methods request interactive authorization and only run after explicit per-action confirmation.
+
+The v0.4 write features are experimental. Validate with a disposable, personally owned, nonessential USB storage device and compare \`sudo usbguard list-rules\` before and after.
