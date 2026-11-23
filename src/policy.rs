@@ -155,6 +155,11 @@ pub fn trust_permanently(selected: &Device) -> Result<TrustResult, String> {
     }
     let bus = system_bus()?;
     let rules = read_rules(&bus)?;
+    if rules.is_empty() {
+        return Err(
+            "USBGuard returned no persistent policy rules. Refusing to save trust without a complete policy snapshot. No changes were made.".into()
+        );
+    }
     if rules.iter().any(|(_, rule)| rule == &desired) {
         return Err("An identical persistent rule already exists. No duplicate was added.".into());
     }
