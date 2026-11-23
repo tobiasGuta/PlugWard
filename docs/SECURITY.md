@@ -66,3 +66,23 @@ before diagnosing the local policies. Details are in the README.
 - **Least privilege:** No sudo/elevated GUI, custom root daemon, broad passwordless Polkit rule, or rewriting of /etc/usbguard configuration. All write methods request interactive authorization and only run after explicit per-action confirmation.
 
 The v0.4 write features are experimental. Validate with a disposable, personally owned, nonessential USB storage device and compare \`sudo usbguard list-rules\` before and after.
+
+## v0.4 alpha 2 — Permanent Trust IPC correctness
+
+USBGuard's `org.usbguard.Policy1.appendRule` D-Bus method accepts
+`(s rule, u parent_id, b temporary)`. The boolean here means *temporary*,
+unlike the underlying IPC client's *permanent* flag. PlugWard sends
+`temporary=false` for a persistent rule and `parent_id=4294967293`
+(`UINT32_MAX-2`, USBGuard's LastID) to append at the end of the ruleset.
+
+`Policy1.listRules` accepts a rule **label filter**, not a rule-language
+expression. PlugWard uses an empty label to obtain the unfiltered policy
+for duplicate checks, the user-owned before-change snapshot, and
+post-write/undo validation. A surprisingly empty listing aborts a new
+permanent-trust write rather than persisting without a credible backup.
+
+The regression suite validates the D-Bus argument variant type `(sub)`,
+the LastID value, `temporary=false`, and the empty rule-label filter.
+This is not a replacement for Fedora runtime verification. The previous
+`InvalidArgs` response rejected the request before a policy change;
+users should still check the active saved policy before retrying.

@@ -4,7 +4,19 @@
 
 PlugWard is an experimental, native GNOME desktop dashboard for [USBGuard](https://usbguard.github.io/). It is written in Rust using GTK4 and libadwaita.
 
-> **Development status:** v0.4 alpha, security-focused preview; permanent-trust and revocation features have not yet passed live Fedora validation. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+> **Development status:** v0.4 alpha, security-focused preview; permanent trust has not yet passed live Fedora validation; temporary revocation has been verified on Fedora. It is not a substitute for USBGuard or a malware scanner. Do not depend on PlugWard to enforce USB policy.
+
+## v0.4 alpha 2: Permanent Trust API fix
+
+On Fedora with USBGuard 1.1.4, the first permanent-trust attempt reported `InvalidArgs`: PlugWard sent `(su)` but `Policy1.appendRule` requires `(sub)`. The D-Bus call was rejected *before* Polkit authorization, so an absent password prompt was expected.
+
+The corrected call supplies `(rule: string, parent_id: u32, temporary: bool)`, using `parent_id=4294967293` (USBGuard's LastID, to append after existing rules) and **`temporary=false`** to request a saved on-disk policy rule. It also changes `Policy1.listRules` from the erroneous label `"match"` to the **empty label**, so the pre-write backup reflects the whole policy; an unexpected empty listing now aborts rather than performing a write.
+
+No USBGuard settings, permissions, or original rules file are modified by installing the fix.
+
+**Before retrying:** Verify that the failed attempt added no rule, with `sudo usbguard list-rules | grep -F '13fe:4200'` (no output is expected). Keep your verified original `rules.conf.before-plugward-v04` backup. Then run the updated PlugWard and review the exact proposed rule again; after saving, independently inspect `sudo usbguard list-rules` **and** the root-owned rules file. Do not repeat a failed or ambiguous append without checking for a rule first.
+
+The source of truth for this D-Bus signature is USBGuard's interface XML and DBusBridge implementation; older generated API HTML omits the `temporary` argument.
 
 ## v0.4 alpha: USB Security Center
 

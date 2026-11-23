@@ -19,6 +19,18 @@ const SERVICE: &str = "org.usbguard1";
 const PATH: &str = "/org/usbguard1/Policy";
 const INTERFACE: &str = "org.usbguard.Policy1";
 
+// USBGuard Policy1.appendRule has signature (s rule, u parent_id, b temporary).
+// This boolean is the inverse of the underlying IPC client permanent flag.
+// LastID (UINT32_MAX-2) appends after existing rules, not after rule ID zero.
+const LAST_RULE_ID: u32 = u32::MAX - 2;
+const PERSISTENT_RULE_IS_TEMPORARY: bool = false;
+const ALL_RULES_LABEL: &str = "";
+
+fn append_rule_parameters(rule: &str) -> gtk::glib::Variant {
+    (rule, LAST_RULE_ID, PERSISTENT_RULE_IS_TEMPORARY).to_variant()
+}
+
+
 #[derive(Clone, Debug)]
 pub struct TrustReceipt {
     pub rule_id: u32,
@@ -94,7 +106,7 @@ fn system_bus() -> Result<gio::DBusConnection, String> {
 fn read_rules(bus: &gio::DBusConnection) -> Result<Vec<(u32, String)>, String> {
     let reply = bus.call_sync(
         Some(SERVICE), PATH, INTERFACE, "listRules",
-        Some(&("match",).to_variant()),
+        Some(&(ALL_RULES_LABEL,).to_variant()),
         None, gio::DBusCallFlags::NONE, 15_000, None::<&gio::Cancellable>,
     ).map_err(|e| format!("Cannot read USBGuard policy: {e}"))?;
     let (rules,): (Vec<(u32, String)>,) = reply.get()
@@ -143,6 +155,11 @@ pub fn trust_permanently(selected: &Device) -> Result<TrustResult, String> {
     }
     let bus = system_bus()?;
     let rules = read_rules(&bus)?;
+    if rules.is_empty() {
+        return Err(
+            "USBGuard returned no persistent policy rules. Refusing to save trust without a complete policy snapshot. No changes were made.".into()
+        );
+    }
     if rules.iter().any(|(_, rule)| rule == &desired) {
         return Err("An identical persistent rule already exists. No duplicate was added.".into());
     }
@@ -152,7 +169,7 @@ pub fn trust_permanently(selected: &Device) -> Result<TrustResult, String> {
     // No USBGuard policy is modified if these steps are denied or aborted.
     let reply = bus.call_sync(
         Some(SERVICE), PATH, INTERFACE, "appendRule",
-        Some(&(desired.as_str(), 0u32).to_variant()),
+        Some(&append_rule_parameters(desired.as_str())),
         None, gio::DBusCallFlags::ALLOW_INTERACTIVE_AUTHORIZATION,
         120_000, None::<&gio::Cancellable>,
     ).map_err(|e| format!(
@@ -242,4 +259,21 @@ mod tests {
         device.port = "3-4\" allow id *:*".into();
         assert!(scoped_rule(&device).is_err());
     }
+    #[test]
+    fn append_rule_uses_correct_dbus_signature_and_persistence_flag() {
+        let rule = scoped_rule(&storage()).unwrap();
+        let parameters = append_rule_parameters(&rule);
+        assert_eq!(parameters.type_().as_str(), "(sub)");
+        let (received_rule, parent_id, temporary): (String, u32, bool) =
+            parameters.get().expect("valid USBGuard appendRule arguments");
+        assert_eq!(received_rule, rule);
+        assert_eq!(parent_id, u32::MAX - 2);
+        assert!(!temporary, "permanent trust must write the policy file");
+    }
+
+    #[test]
+    fn list_rules_query_is_unfiltered_for_complete_backup() {
+        assert_eq!(ALL_RULES_LABEL, "");
+    }
+
 }
